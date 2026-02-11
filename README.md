@@ -91,4 +91,29 @@ https://docs.aws.amazon.com/glue/latest/dg/what-is-glue.html
 AWS glue pricing related details are here : 
 https://aws.amazon.com/glue/pricing/
 
+### **What is Serverless?**
+Serverless means that you don't need to manage the underlying infrastructure, scaling etc. you just have to run the service.
+
+### AWS Glue components 
+- Direct tools: 
+    - Data Catalog
+    - Crawler
+    - Glue Data Brew
+- Indirect tools:
+    - S3
+    - Athena
+    - IAM
+    - Lambda
+
+**NOTE :** IAM is the most important component in AWS you cannot build anything without IAM in AWS because security is the most important thing. <br>
+IAM is a security through which multiple components talk to each other.
+
+**What is IAM ?** <br>
+AWS Identity and Access Management (IAM) is a web service for securely controlling access to AWS services. With IAM, you can centrally manage users, security credentials such as access keys, and permissions that control which AWS resources users and applications can access.
+Docs link related to IAM in AWS docs : <br>
+https://docs.aws.amazon.com/iam/
+
+
+
+
 

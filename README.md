@@ -130,7 +130,7 @@ Normally this is not possible because csv is just a text file how can someone qu
 Whenever you use SQL to query data that data needs to be a structured data i.e rows and columns <br>
 You may say that if you open a csv file in excel you can view it in rows and columns, but excel is a software that is built to render the data inside the csv file in rows and columns but that doesn't mean the data iself is stored in rows and columns to be able to call it a structured data. <br>
 So here we will apply an abstraction layer and this abstraction layer will be applied by **Data Catalog**. <br>
-The moment you apply the abstraction applied by the **Data Catalog** the csv files stored in S3 starts behaving like objects of the database. FYI catalogs are equivalent to database. <br>
+The moment you apply the abstraction applied by the **Data Catalog** the csv files stored in S3 starts behaving like objects of the database. FYI catalogs are equivalent to database. **So whenever you go inside the AWS Glue service and under the section Data Catalog you create a new database that means you are creating a new catalog.**<br>
 This catalog will register the metadata and schema of the files and will create an object in the catalog. <br>
 **ADVANTAGE :**
 - This AWS Glue catalog gives the devs the power to use their SQL skills to query the data stored in csv, parquete etc. files (a non structured data) in the same way they would have queried the objects of databases.
@@ -141,6 +141,8 @@ Here are some references that you can use from the official docs <br>
 https://docs.aws.amazon.com/glue/latest/dg/components-overview.html#data-catalog-intro
 Getting started with the AWS Glue Data Catalog <br>
 https://docs.aws.amazon.com/glue/latest/dg/start-data-catalog.html
+
+
 
 
 

@@ -137,9 +137,10 @@ This catalog will register the metadata and schema of the files and will create 
 - Catalog is the backbone of all the queries that you do in Athena. 
 - If catalog is not there you will not be able to query the data.
 
-
-
-
+Here are some references that you can use from the official docs <br> 
+https://docs.aws.amazon.com/glue/latest/dg/components-overview.html#data-catalog-intro
+Getting started with the AWS Glue Data Catalog <br>
+https://docs.aws.amazon.com/glue/latest/dg/start-data-catalog.html
 
 
 

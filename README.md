@@ -1,6 +1,11 @@
 # AWS Glue NOTES
 This is a notes on AWS Glue for data engineers.
 
+# Prerequisites
+## Dataset used:
+https://github.com/darshilparmar/uber-etl-pipeline-data-engineering-project/blob/main/data/uber_data.csv
+
+
 ## Topics to cover : 
 - AWS S3
 - Managed Tables
@@ -142,6 +147,9 @@ https://docs.aws.amazon.com/glue/latest/dg/components-overview.html#data-catalog
 Getting started with the AWS Glue Data Catalog <br>
 https://docs.aws.amazon.com/glue/latest/dg/start-data-catalog.html
 
+#### How to create databases in AWS Glue?
+You can create a database in AWS Glue by going to the menue option named database under the Data Catalog section on the side panel provided by AWS. <br>
+On top right corner you will find the Add database button press it and create your database <br>
 
 
 

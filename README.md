@@ -21,8 +21,6 @@ This is a notes on AWS Glue for data engineers.
 - Custom collection methods in AWS Glue
 
 ## AWS Glue
-**Why AWS Glue?** <br>
-
 ### **What is ETL/ELT?** <br>
 We want to **E**xtract the data and **L**oad that data somewhere and that loaded data should be **T**ransformed as per requirments.
 - Data engineer will pull data from the sources 
@@ -77,5 +75,20 @@ We want to **E**xtract the data and **L**oad that data somewhere and that loaded
 | Scaling compute      | Hard                 | Elastic                          |
 | Best for             | Structured reporting | Analytics + AI + experimentation |
 | Change tolerance     | Low                  | High                             |
+
+### **Why AWS Glue?** <br>
+AWS glue is a combination of many components that are stiched together. It is a serverless data integration service.
+
+It helps you:
+- Discover data
+- Catalog metadata
+- Transform data
+- Prepare data for analytics
+
+AWS glue docs : 
+https://docs.aws.amazon.com/glue/latest/dg/what-is-glue.html
+
+AWS glue pricing related details are here : 
+https://aws.amazon.com/glue/pricing/
 
 

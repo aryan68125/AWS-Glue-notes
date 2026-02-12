@@ -408,8 +408,20 @@ I get this output where total_amount is greater than 100
 | 19 | 2 | 2016-03-10 08:08:23 | 2016-03-10 08:57:15 | 5 | 13.87 | -73.87235260009764 | 40.77408218383789 | 5 | N | -73.97357177734375 | 40.86507034301758 | 1 | 100.0 | 0.0 | 0.0 | 20.06 | 0.0 | 0.3 | 120.36 |
 | 20 | 2 | 2016-03-10 08:10:49 | 2016-03-10 08:57:12 | 1 | 25.62 | -73.96985626220702 | 40.75365829467773 | 1 | N | -73.80845642089844 | 41.0317497253418 | 1 | 69.0 | 0.0 | 0.5 | 34.0 | 5.54 | 0.3 | 109.34 |
 
-#### Conclusion
+#### CTAS Managed
+- Everything is the same except the data is now owned by athena because the data will be stored in the S3 bucket managed by Athena. Hence the data will not be owned by you but AWS.
+- Unlike External CTAS here in managed CTAS you don't have to provide the location of where you want to store the data.
+- What is a managed location? 
+    - There is a special folder that AWS glue will create whenever you want to create a managed data or managed table in AWS
+- Unlike External CTAS if you delete the managed CTAS then the actual data will also be deleted along with the metadata. Hence we can say that the data is not owned by you but AWS Glue.
+- How to create a managed CTAS
+```sql
+CREATE TABLE uber_data_most_tipped_filtered_managed_table 
+AS 
+SELECT * FROM uber_data_external_table WHERE TRY_CAST(tip_amount AS DOUBLE) > 5; 
+```
 
+#### Conclusion
 **Advantages of External CTAS :**<br>
 - Full control over data location 
     - This is mandatory in:

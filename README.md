@@ -142,15 +142,77 @@ This catalog will register the metadata and schema of the files and will create 
 - Catalog is the backbone of all the queries that you do in Athena. 
 - If catalog is not there you will not be able to query the data.
 
+There are three things in Data Catalog: 
+- External table
+- CTAS managed
+- CTAS external
+
 Here are some references that you can use from the official docs <br> 
 https://docs.aws.amazon.com/glue/latest/dg/components-overview.html#data-catalog-intro
 Getting started with the AWS Glue Data Catalog <br>
 https://docs.aws.amazon.com/glue/latest/dg/start-data-catalog.html
 
-#### How to create databases in AWS Glue?
+### How to create databases in AWS Glue?
 You can create a database in AWS Glue by going to the menue option named database under the Data Catalog section on the side panel provided by AWS. <br>
 On top right corner you will find the Add database button press it and create your database <br>
 
+### How to create tables in AWS Glue catalog?
+There are two ways to create a table in catalog:
+- Manual
+- Through crawlers
 
+#### External table
+When you have the data in the datalake (S3 bucket) and you want to register the data in the data catalog. <br>
+Table metadata lives in the catalog but the real data is stored in the S3 bucket which is managed by you. <br>
+amazon athena docs link : <br>
+https://docs.aws.amazon.com/athena/
+
+#### How to create External table using Athena.
+External table is the same as externally managed tables that I read in databricks.
+
+**STEP 1:** <br>
+Go to athena query console > settings > set query result path <br>
+NOTE : The source and destination should not be the same i.e you cannot give the same s3 bucket url where you have the csv files to save your athena query results, it must be different or else you will keep getting errors saying destination to store query results is not provided when you try to create the external table.
+
+**STEP 2:** <br>
+From the left side panel > select create > and from the create table from data source section > select S3 bucket data
+
+**STEP 3:** <br>
+You will be greeted with a page where you will have to set 
+- The table name, table description
+- Dataset : set the location to the csv file in the s3 bucket that you are trying to use to create an external table from.
+- Add bulk column button to set the column names and their data types. Since I am creating an external managed table from a csv file I can set all the columns to be of string type because csv files are not a structured data and it stores data in form of strings itself saperated by comma.
+
+**STEP 4:** <br>
+Once you did all the above steps correctly you will see a query to create external table generated for you. Your query should look like this : 
+```python
+CREATE EXTERNAL TABLE IF NOT EXISTS `aws-glue-tutorial-aditya`.`uber_data_external_table` (
+  `vendorid` string,
+  `tpep_pickup_datetime` string,
+  `tpep_dropoff_datetime` string,
+  `passenger_count` string,
+  `trip_distance` string,
+  `pickup_longitude` string,
+  `pickup_latitude` string,
+  `ratecodeid` string,
+  `store_and_fwd_flag` string,
+  `dropoff_longitude` string,
+  `dropoff_latitude` string,
+  `payment_type` string,
+  `fare_amount` string,
+  `extra` string,
+  `mta_tax` string,
+  `tip_amount` string,
+  `tolls_amount` string,
+  `improvement_surcharge` string,
+  `total_amount` string
+) COMMENT "This table holds the data related to customer behaviour and ride metrics for all the taxis that work under uber fleet"
+ROW FORMAT SERDE 'org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe'
+STORED AS INPUTFORMAT 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat' OUTPUTFORMAT 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat'
+LOCATION 's3://aws-glue-s3-bucket-one/raw_data/'
+TBLPROPERTIES ('classification' = 'parquet');
+```
+
+#### Manual:
 
 

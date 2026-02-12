@@ -338,7 +338,7 @@ If you look closely at this portion of the above code you will see that I have m
 
 **Mistake 1:**<br>
 
-````sql
+```sql
 WITH (
     format = "PARQUET",
     external_location = "s3://athena-query-result-bucket-268859/uber_table_query_result/filtered_data"

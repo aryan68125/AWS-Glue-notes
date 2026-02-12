@@ -229,7 +229,37 @@ This query ran against the "aws-glue-tutorial-aditya" database, unless qualified
 After some research I found out that in the UI I may have accidently selected the paraquet format instead of csv. <br>
 Look at the error where it says ```Expected magic number: PAR1 got: 6.8``` this means that the metadata created by athena says that it is a paraquet file but my actual data file in the s3 is a csv file and hence I am getting a file format mismatch error.
 
-
+**Solution :**
+Since I am trying to create an external table where the actual data is stored in csv file hence I will have to choose the file format to be of type CSV under the Data format section. <br>
+Once you do that and re-create the external table you will get the generated query that looks something like this. 
+```sql
+CREATE EXTERNAL TABLE IF NOT EXISTS `aws-glue-tutorial-aditya`.`uber_data_external_table` (
+  `vendorid` string,
+  `tpep_pickup_datetime` string,
+  `tpep_dropoff_datetime` string,
+  `passenger_count` string,
+  `trip_distance` string,
+  `pickup_longitude` string,
+  `pickup_latitude` string,
+  `ratecodeid` string,
+  `store_and_fwd_flag` string,
+  `dropoff_longitude` string,
+  `dropoff_latitude` string,
+  `payment_type` string,
+  `fare_amount` string,
+  `extra` string,
+  `mta_tax` string,
+  `tip_amount` string,
+  `tolls_amount` string,
+  `improvement_surcharge` string,
+  `total_amount` string
+) COMMENT "This is a test table to see if I am able to create an externally managed table using a csv file"
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe'
+WITH SERDEPROPERTIES ('field.delim' = ',')
+STORED AS INPUTFORMAT 'org.apache.hadoop.mapred.TextInputFormat' OUTPUTFORMAT 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat'
+LOCATION 's3://aws-glue-s3-bucket-one/raw_data/'
+TBLPROPERTIES ('classification' = 'csv');
+```
 
 #### Manual:
 

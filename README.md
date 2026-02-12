@@ -473,13 +473,16 @@ SELECT * FROM uber_data_external_table WHERE TRY_CAST(tip_amount AS DOUBLE) > 5;
 
 | Aspect              | Managed CTAS   | External CTAS |
 | ------------------- | -------------- | ------------- |
-| Storage location    | Athena-managed | User-defined  |
 | Data lake friendly  | No             | yes           |
 | Governance          | No             | yes           |
 | Reusable by Glue    | questionable   | yes           |
 | Safe for production | No             | yes           |
 | Easy cleanup        | No             | manual        |
 | Best for            | Experiments    | Pipelines     |
+
+**NOTE :** <br>
+Usually when we create a Managed table or CTAS in traditional platform like Databricks and if you drop that table when data is also deleted along with table's metadata.
+But in AWS the behaviour is different. Even if you delete the Managed table in AWS athena your data in S3 will not be deleted because S3 is a different service and athena is different service. 
 
 Athena related docs : https://docs.aws.amazon.com/athena/latest/ug/what-is.html
 

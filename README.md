@@ -185,7 +185,7 @@ You will be greeted with a page where you will have to set
 
 **STEP 4:** <br>
 Once you did all the above steps correctly you will see a query to create external table generated for you. Your query should look like this : 
-```python
+```sql
 CREATE EXTERNAL TABLE IF NOT EXISTS `aws-glue-tutorial-aditya`.`uber_data_external_table` (
   `vendorid` string,
   `tpep_pickup_datetime` string,
@@ -212,6 +212,24 @@ STORED AS INPUTFORMAT 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFo
 LOCATION 's3://aws-glue-s3-bucket-one/raw_data/'
 TBLPROPERTIES ('classification' = 'parquet');
 ```
+
+#### Issues I ran into : After creating an external table
+After I was able to successfully create an external table. I tried querying it using this sql query. 
+```sql
+SELECT * FROM "aws-glue-tutorial-aditya"."uber_data_external_table" limit 10;
+```
+The moment I ran this query I was slapped by this error right on my face.
+```bash
+HIVE_BAD_DATA: Malformed Parquet file. Expected magic number: PAR1 got: 6.8 [s3://aws-glue-s3-bucket-one/raw_data/uber_data.csv]
+
+This query ran against the "aws-glue-tutorial-aditya" database, unless qualified by the query. Please post the error message on our forum  or contact customer support  with Query Id: 0a40a5c0-1kk6-4fuc-9kyo-21uc7c7e5521
+```
+
+**Reason why this happened?** <br>
+After some research I found out that in the UI I may have accidently selected the paraquet format instead of csv. <br>
+Look at the error where it says ```Expected magic number: PAR1 got: 6.8``` this means that the metadata created by athena says that it is a paraquet file but my actual data file in the s3 is a csv file and hence I am getting a file format mismatch error.
+
+
 
 #### Manual:
 

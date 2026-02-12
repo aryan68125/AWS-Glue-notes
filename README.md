@@ -185,6 +185,7 @@ You will be greeted with a page where you will have to set
 
 **STEP 4:** <br>
 Once you did all the above steps correctly you will see a query to create external table generated for you. Your query should look like this : 
+
 ```sql
 CREATE EXTERNAL TABLE IF NOT EXISTS `aws-glue-tutorial-aditya`.`uber_data_external_table` (
   `vendorid` string,
@@ -215,10 +216,13 @@ TBLPROPERTIES ('classification' = 'parquet');
 
 #### Issues I ran into : After creating an external table
 After I was able to successfully create an external table. I tried querying it using this sql query. 
+
 ```sql
 SELECT * FROM "aws-glue-tutorial-aditya"."uber_data_external_table" limit 10;
 ```
+
 The moment I ran this query I was slapped by this error right on my face.
+
 ```bash
 HIVE_BAD_DATA: Malformed Parquet file. Expected magic number: PAR1 got: 6.8 [s3://aws-glue-s3-bucket-one/raw_data/uber_data.csv]
 
@@ -232,6 +236,7 @@ Look at the error where it says ```Expected magic number: PAR1 got: 6.8``` this 
 **Solution :**
 Since I am trying to create an external table where the actual data is stored in csv file hence I will have to choose the file format to be of type CSV under the Data format section. <br>
 Once you do that and re-create the external table you will get the generated query that looks something like this. 
+
 ```sql
 CREATE EXTERNAL TABLE IF NOT EXISTS `aws-glue-tutorial-aditya`.`uber_data_external_table` (
   `vendorid` string,
@@ -260,17 +265,22 @@ STORED AS INPUTFORMAT 'org.apache.hadoop.mapred.TextInputFormat' OUTPUTFORMAT 'o
 LOCATION 's3://aws-glue-s3-bucket-one/raw_data/'
 TBLPROPERTIES ('classification' = 'csv');
 ```
+
 If you look at the generated sql code closely you will see that instead of this ```OUTPUTFORMAT 'org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat'
 ``` now you have this ```OUTPUTFORMAT 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat'```
 
 Now when I query the table to get the data from my csv file using athena it works 
+
 ```sql
 SELECT * FROM "aws-glue-tutorial-aditya"."uber_data_external_table" limit 10;
 ```
+
 OR 
+
 ```sql
 SELECT * FROM uber_data_external_table LIMIT 10;
 ```
+
 output -> : <br>
 
 | #  | vendorid | tpep_pickup_datetime | tpep_dropoff_datetime | passenger_count | trip_distance | pickup_longitude | pickup_latitude | ratecodeid | store_and_fwd_flag | dropoff_longitude | dropoff_latitude | payment_type | fare_amount | extra | mta_tax | tip_amount | tolls_amount | improvement_surcharge | total_amount |
@@ -286,6 +296,116 @@ output -> : <br>
     - Why you would want to query your logs using Athena? 
         - You can make debugging in PROD a hell of a lot easier if you decide to design your logs Athena friendly in moments where your project is working fine in local, dev and QA environment but some error is happening in the PROD and you need to know why is this happening and from where? 
         - So make sure you always generate athena friendly logs in your projects if you are going to write it from scratch.
+
+#### CTAS
+There are two types of CTAS
+- CTAS external
+- CTAS managed
+
+CTAS means **C**reate **T**able **A**s **S**elect. If I want to create a new table instead of using the csv file (source file) I want to use the already existing external or managed table then in that case CTAS will help me achieve my goal.
+
+#### Issues I faced when creating a CTAS in athena
+I first ran this SQL query where I filtered the records based on total_amount where the total_amount must have value in it more than 100 
+
+```sql
+SELECT *
+FROM uber_data_external_table
+WHERE TRY_CAST(total_amount AS DOUBLE) > 100
+LIMIT 10;
+```
+Once the sql query ran successfully and I was satisfied with the result I got I ended up creating a CTAS of this query.
+
+```sql
+CREATE TABLE uber_data_total_amount_filtered
+WITH (
+    format = "PARQUET",
+    external_location = "s3://athena-query-result-bucket-268859/uber_table_query_result/filtered_data"
+    write_compression = 'SNAPPY'
+) AS
+SELECT *
+FROM uber_data_external_table
+WHERE TRY_CAST(total_amount AS DOUBLE) > 100;
+```
+
+Then when I ran this sql query athena again slapped me with this error 
+
+```bash
+line 5:5: mismatched input 'write_compression'. Expecting: '%', ')', '*', '+', ',', '-', '.', '/', 'AND', 'AS', 'AT', 'OR', '[', '||', <EOF>, <predicate>
+```
+
+**Why this error happened?** <br>
+If you look closely at this portion of the above code you will see that I have made several mistakes in the above query.
+
+**Mistake 1:**<br>
+
+````sql
+WITH (
+    format = "PARQUET",
+    external_location = "s3://athena-query-result-bucket-268859/uber_table_query_result/filtered_data"
+    write_compression = 'SNAPPY'
+)
+```
+
+As you can see I forgot to put comma after defining external_location and white_compression.
+
+**Mistake 2:** <br>
+Another mistake that I did I wrapped the PARQUET and the external_location in double quotes which is wrong. I din't realise that athena query editor would treat it as a literal string instead of the provided value.
+
+Here is the corrected code block 
+
+```sql
+WITH (
+    format = 'PARQUET',
+    external_location = 's3://athena-query-result-bucket-268859/uber_table_query_result/filtered_data',
+    write_compression = 'SNAPPY'
+)
+```
+
+Here is the complete sql query to create this CTAS 
+
+```sql
+CREATE TABLE uber_data_total_amount_filtered
+WITH (
+    format = 'PARQUET',
+    external_location = 's3://athena-query-result-bucket-268859/uber_table_query_result/filtered_data',
+    write_compression = 'SNAPPY'
+) AS
+SELECT *
+FROM uber_data_external_table
+WHERE TRY_CAST(total_amount AS DOUBLE) > 100;
+```
+
+Now when I use this sql query 
+
+```sql
+SELECT * fROM uber_data_total_amount_filtered;
+```
+
+I get this output where total_amount is greater than 100
+
+| # | vendorid | tpep_pickup_datetime | tpep_dropoff_datetime | passenger_count | trip_distance | pickup_longitude | pickup_latitude | ratecodeid | store_and_fwd_flag | dropoff_longitude | dropoff_latitude | payment_type | fare_amount | extra | mta_tax | tip_amount | tolls_amount | improvement_surcharge | total_amount |
+|---|----------|----------------------|------------------------|-----------------|--------------|------------------|------------------|------------|--------------------|-------------------|------------------|--------------|------------|-------|---------|------------|-------------|----------------------|--------------|
+| 1 | 2 | 2016-03-01 00:00:00 | 2016-03-01 00:00:00 | 5 | 30.43 | -73.97174072265625 | 40.79218292236328 | 3 | N | -74.17716979980467 | 40.69505310058594 | 1 | 98.0 | 0.0 | 0.0 | 0.0 | 15.5 | 0.3 | 113.8 |
+| 2 | 2 | 2016-03-10 07:09:59 | 2016-03-10 07:36:24 | 1 | 11.43 | -73.87612915039062 | 40.77179336547852 | 5 | N | -73.9721450805664 | 40.847412109375 | 1 | 90.0 | 0.0 | 0.5 | 8.0 | 18.04 | 0.3 | 116.84 |
+| 3 | 2 | 2016-03-10 07:20:15 | 2016-03-10 07:50:14 | 6 | 17.34 | -74.00823974609375 | 40.70524978637695 | 3 | N | -74.17768096923827 | 40.6953010559082 | 1 | 65.5 | 0.0 | 0.0 | 24.99 | 17.5 | 0.3 | 108.29 |
+| 4 | 2 | 2016-03-10 07:20:50 | 2016-03-10 07:52:07 | 5 | 18.41 | -74.00350189208984 | 40.742141723632805 | 3 | N | -74.17713928222656 | 40.695011138916016 | 1 | 66.5 | 0.0 | 0.0 | 16.86 | 17.5 | 0.3 | 101.16 |
+| 5 | 2 | 2016-03-10 07:25:36 | 2016-03-10 08:13:46 | 2 | 25.82 | -73.99234008789062 | 40.731342315673835 | 3 | N | -74.36077880859375 | 40.742630004882805 | 1 | 87.5 | 0.0 | 0.0 | 25.08 | 12.5 | 0.3 | 125.38 |
+| 6 | 2 | 2016-03-10 07:26:30 | 2016-03-10 07:45:42 | 2 | 10.78 | -73.84951782226561 | 40.748043060302734 | 5 | N | -73.70035552978516 | 40.758079528808594 | 1 | 84.95 | 0.0 | 0.0 | 17.05 | 0.0 | 0.3 | 102.3 |
+| 7 | 2 | 2016-03-10 07:26:57 | 2016-03-10 08:15:27 | 1 | 21.83 | -73.92046356201173 | 40.74689102172852 | 3 | N | -74.1777801513672 | 40.69536972045898 | 1 | 79.0 | 0.0 | 0.0 | 28.89 | 17.0 | 0.3 | 125.19 |
+| 8 | 2 | 2016-03-10 07:34:42 | 2016-03-10 08:04:53 | 1 | 19.88 | -73.78182983398438 | 40.64485549926758 | 4 | N | -73.58753204345702 | 40.72392272949219 | 1 | 83.0 | 0.0 | 0.5 | 16.76 | 0.0 | 0.3 | 100.56 |
+| 9 | 2 | 2016-03-10 07:36:42 | 2016-03-10 08:29:31 | 1 | 29.3 | -73.86388397216798 | 40.76948165893555 | 4 | N | -73.42192840576173 | 40.77008819580078 | 1 | 125.5 | 0.0 | 0.5 | 25.26 | 0.0 | 0.3 | 151.56 |
+| 10 | 2 | 2016-03-10 07:40:55 | 2016-03-10 08:39:06 | 1 | 44.49 | -74.01718139648438 | 40.70839691162109 | 5 | N | -74.64081573486328 | 40.574981689453125 | 1 | 225.0 | 0.0 | 0.0 | 47.56 | 12.5 | 0.3 | 285.36 |
+| 11 | 2 | 2016-03-10 07:49:11 | 2016-03-10 07:49:24 | 1 | 0.0 | -73.94847869873048 | 40.7972526550293 | 5 | N | -73.94839477539062 | 40.797229766845696 | 2 | 200.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.3 | 200.3 |
+| 12 | 2 | 2016-03-10 07:51:38 | 2016-03-10 08:33:43 | 1 | 18.69 | -73.98118591308595 | 40.741558074951165 | 3 | N | -74.17737579345702 | 40.69525909423828 | 1 | 70.5 | 0.0 | 0.0 | 15.0 | 15.0 | 0.3 | 100.8 |
+| 13 | 2 | 2016-03-10 07:53:24 | 2016-03-10 08:59:22 | 1 | 43.65 | -74.00305938720702 | 40.72332382202149 | 5 | N | -74.45540618896483 | 40.84825134277344 | 1 | 143.33 | 0.0 | 0.5 | 39.16 | 12.5 | 0.3 | 195.79 |
+| 14 | 2 | 2016-03-10 07:57:54 | 2016-03-10 09:24:29 | 4 | 45.68 | -73.87310028076173 | 40.7741584777832 | 4 | N | -73.19992828369139 | 40.708599090576165 | 2 | 212.5 | 0.0 | 0.5 | 0.0 | 0.0 | 0.3 | 213.3 |
+| 15 | 2 | 2016-03-10 08:00:55 | 2016-03-10 08:03:20 | 1 | 1.51 | -74.18675994873048 | 40.69744873046875 | 5 | N | -74.17733764648438 | 40.69512176513672 | 1 | 100.0 | 0.0 | 0.0 | 0.01 | 0.0 | 0.3 | 100.31 |
+| 16 | 2 | 2016-03-10 08:01:08 | 2016-03-10 08:02:46 | 1 | 0.0 | -73.81371307373048 | 40.89707946777344 | 5 | N | -73.81371307373048 | 40.897090911865234 | 1 | 106.0 | 0.0 | 0.0 | 15.0 | 0.0 | 0.3 | 121.3 |
+| 17 | 2 | 2016-03-10 08:05:32 | 2016-03-10 08:58:31 | 1 | 19.24 | -73.9886703491211 | 40.77503967285156 | 3 | N | -74.17704010009764 | 40.69496154785156 | 1 | 77.0 | 0.0 | 0.0 | 17.96 | 12.5 | 0.3 | 107.76 |
+| 18 | 2 | 2016-03-10 08:06:43 | 2016-03-10 09:05:58 | 1 | 40.27 | -74.0052719116211 | 40.744930267333984 | 5 | N | -74.48404693603516 | 40.52020263671875 | 1 | 171.0 | 0.0 | 0.5 | 20.0 | 17.0 | 0.3 | 208.8 |
+| 19 | 2 | 2016-03-10 08:08:23 | 2016-03-10 08:57:15 | 5 | 13.87 | -73.87235260009764 | 40.77408218383789 | 5 | N | -73.97357177734375 | 40.86507034301758 | 1 | 100.0 | 0.0 | 0.0 | 20.06 | 0.0 | 0.3 | 120.36 |
+| 20 | 2 | 2016-03-10 08:10:49 | 2016-03-10 08:57:12 | 1 | 25.62 | -73.96985626220702 | 40.75365829467773 | 1 | N | -73.80845642089844 | 41.0317497253418 | 1 | 69.0 | 0.0 | 0.5 | 34.0 | 5.54 | 0.3 | 109.34 |
+
 
 #### Manual:
 

@@ -408,7 +408,68 @@ I get this output where total_amount is greater than 100
 | 19 | 2 | 2016-03-10 08:08:23 | 2016-03-10 08:57:15 | 5 | 13.87 | -73.87235260009764 | 40.77408218383789 | 5 | N | -73.97357177734375 | 40.86507034301758 | 1 | 100.0 | 0.0 | 0.0 | 20.06 | 0.0 | 0.3 | 120.36 |
 | 20 | 2 | 2016-03-10 08:10:49 | 2016-03-10 08:57:12 | 1 | 25.62 | -73.96985626220702 | 40.75365829467773 | 1 | N | -73.80845642089844 | 41.0317497253418 | 1 | 69.0 | 0.0 | 0.5 | 34.0 | 5.54 | 0.3 | 109.34 |
 
+#### Conclusion
 
+**Advantages of External CTAS :**<br>
+- Full control over data location 
+    - This is mandatory in:
+        - Medallion architecture
+        - Enterprise data lakes
+        - Glue + Athena + EMR setups
+    - Managed CTAS:
+        - Dumps data in Athena’s results bucket
+        - Breaks lake organization
+        - Mixes temp + permanent data
+- Data is not tied to athena
+    - External CTAS output can be used by:
+        - AWS Glue
+        - Amazon Redshift Spectrum
+        - EMR / Spark
+        - AWS Lake Formation
+        - Other Athena workgroups
+    - Managed CTAS data:
+        - Is logically Athena-owned
+        - Lives in query-result bucket
+        - Not intended as a shared dataset
+- Predictable permissions and security
+    - With external CTAS:
+        - You control bucket policies
+        - You control IAM roles
+        - You control cross-account access
+    - Managed CTAS:
+        - Uses Athena’s execution role
+        - Harder to govern
+        - Risk of accidental exposure
+- Lifecycle and cost control
+    - External CTAS lets you:
+        - Apply S3 lifecycle rules
+        - Transition to Glacier
+        - Auto-delete old partitions
+    - Managed CTAS:
+        - Lives in Athena results bucket
+        - Often accumulates junk
+        - Higher long-term cost
+- Required for production pipelines
+    - External CTAS is required for:
+        - Silver / Gold layers
+        - Repeatable pipelines
+        - Versioned datasets
+        - CI/CD-controlled analytics tables
+    - Managed CTAS are not pipeline safe.
+
+**External CTAS VS Managed CTAS** <br>
+
+| Aspect              | Managed CTAS   | External CTAS |
+| ------------------- | -------------- | ------------- |
+| Storage location    | Athena-managed | User-defined  |
+| Data lake friendly  | No             | yes           |
+| Governance          | No             | yes           |
+| Reusable by Glue    | questionable   | yes           |
+| Safe for production | No             | yes           |
+| Easy cleanup        | No             | manual        |
+| Best for            | Experiments    | Pipelines     |
+
+Athena related docs : https://docs.aws.amazon.com/athena/latest/ug/what-is.html
 
 
 #### Manual:

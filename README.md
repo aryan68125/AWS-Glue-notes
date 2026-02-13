@@ -631,7 +631,16 @@ In this crawler page you will see create crawler button by pressing this button 
 #### **Error I faced when ingesting data from csv files using crawler** <br>
 - In my case the table that it generated was not right for some reason It added the column names as col_1, col_2 etc.. and the actual column names were inserted as the first row in the table.
 - ![error_when_ingesting_data_via_crawler](images/error_when_ingesting_data_via_crawler.png)
-
+#### Solution : Error I faced when ingesting data from csv files using crawler
+- The reason why the crawler when ingesting data from the csv file stored in S3 created a table where the actual column names were added in the first row instead of the header is because when creating crawler I forgot to create classifier for it.
+- **How to create classifier for crawler?**
+    - ![crawler_classifier](images/crawler_classifier.png)
+    - You need to configure your crawler's classifier depending on the type of file you want to ingest
+    - Here in this case I am trying to register the table for my csv file using crawler hence I chose the options as shown in the picture above.
+- One thing to note even after adding this crawler I was not able to get the proper results when I attempted to re-ingest a csv file after deleting its data from the s3 bucket manually where athena stores its query results. 
+- The reason for it to happen is because if you crawled a file without any classifer attached to it and you attached the classifier after you crawled that file.
+- The classifier will not be used even if you re-ingest that file after deleting all its data from the s3 bucket where athena stores its query result. 
+- The only way is to delete the csv file from the source , delete the data where the query results are stored and then re-run the classifier.
 
 
 

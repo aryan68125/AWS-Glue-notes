@@ -481,10 +481,33 @@ SELECT * FROM uber_data_external_table WHERE TRY_CAST(tip_amount AS DOUBLE) > 5;
 | Best for            | Experiments    | Pipelines     |
 
 **NOTE :** <br>
-Usually when we create a Managed table or CTAS in traditional platform like Databricks and if you drop that table when data is also deleted along with table's metadata.
-But in AWS the behaviour is different. Even if you delete the Managed table in AWS athena your data in S3 will not be deleted because S3 is a different service and athena is different service. 
+- Usually when we create a Managed table or CTAS in traditional platform like Databricks and if you drop that table when data is also deleted along with table's metadata.
+    - Databricks chooses storage location inside DBFS / Unity catalog
+    - Owns both metadata and data
+    - Treats it as fully lifecycle-managed
+    - So when I drop a managed table in databricks then it not only is able to delete the metadata of the table but also its actual data.
+- But in AWS the behaviour is different. Even if you delete the Managed table in AWS athena your managed table data in S3 will not be deleted because:
+    - Athena is a query engine only
+    - Athena is serverless
+    - Athena is stateless
+    - Athena does not own storage
+    - All data lives in
+        - All data lives in AWS S3
+        - Glue Data Catalog is only used to store table's metadata
+    - **What managed table actually means in Athena?**
+        - Athena chooses an S3 path automatically
+        - Usually inside the Athena results bucket
+        - But the data is still in my S3 bucket
+    - So when I delete a managed table from AWS using Athena
+        - Athena deletes the managed table's metadata
+        - Athena does not deletes the S3 objects.
+        - S3 is an independednt service of Athena i.e Athena does not assumes it owns the S3 bucket.
+- **So we can say that the difference between the managed and external table in case of Athena is that:
+    - When creating external table you have to tell Athena where to store your query result
+    - When creating managed table you don't have to tell Athena where to store the query result it will automatically store the query result in the S3 bucket that you set in the Athena's settings**
 
 Athena related docs : https://docs.aws.amazon.com/athena/latest/ug/what-is.html
+
 
 
 #### Manual:

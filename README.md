@@ -538,11 +538,103 @@ Athena related docs : https://docs.aws.amazon.com/athena/latest/ug/what-is.html
 - IAM is a component of AWS which allows us to provide access to users and services within the AWS ecosystem.
 - So a crawler must carry the access (IAM aka Role) under the hood and this access is actually carry the permissions for AWS glue and S3 bucket.
 
+#### What are IAM roles?
+- An IAM Role is a set of permissions that can be assumed temporarily by:
+    - AWS services
+    - Users
+    - Applications
+    - Other AWS accounts
+- Unlike IAM users, roles do not have permanent credentials (no fixed passwords or access key)
+- They provide temporary security credentials when assumed.
+
+| Feature                      | IAM User | IAM Role     |
+| ---------------------------- | -------- | ------------ |
+| Has permanent credentials    | Yes      |   No         |
+| Used by humans               | Yes      |   Usually no |
+| Used by AWS services         | No       |   Yes        |
+| Temporary access             | No       |   Yes        |
+| Best practice for production | No       |   Yes        |
+
+### Before you create a crawler you need to create a role that the crawler will use to access S3 and AWS glue catalog for it to be able to register tables from the data present in the S3 bucket
+**STEP 1:**<br>
+- Search for IAM in AWS and once you hit enter you will be greeted with IAM main page.
+- Once you are there you need to go to the side panel on the left and select Role option there.
+
+**STEP 2:**<br>
+- Create a new role for Glue service and then hit next
+- After hitting next you will be greeted with a new page where you will have to configure the permissions policies for your role that you are creating.
+
+![create_a_role_for_glue](images/create_a_role_for_glue.png)
+
+**STEP 3:**<br>
+- In the permission policies page search for glue related permissions
+- There you need to check AWSGlueServiceRole IAM policy 
+- AWSGlueServiceRole is an AWS managed IAM policy designed for: Allowing AWS Glue to run jobs, crawlers, and workflows. It gives Glue the basic permissions it needs to function properly.
+    - This allows:
+        - Creating tables
+        - Updating metadata
+        - Managing crawlers
+        - Reading the data catalog
+
+![providing_access_to_glue_service_role](images/providing_access_to_glue_service_role.png
+)
+
+**STEP 4:** <br>
+- Now in permissions policies page I need to search for s3
+- There from the list select AmazonS3FullAccess
+- AmazonS3FullAccess is an AWS managed IAM policy that grants full administrative access to all Amazon S3 resources in your account.
+    - Whoever has this policy can do anything in S3.
+    - For learning purposes and to keep things simple I am going to use this policy.
+    - It is not at all recommended to use this AmazonS3FullAccess policy in the production environment since it can compromise the data sitting in the S3 in the event if the security key gets leaked.
+    - You should always use your custom policy and exactly define what permissions you want to give to crawler when performing operations in S3.
+
+![provide_s3_permissions_to_this_role](images/provide_s3_permissions_to_this_role.png)
+
+**STEP 5:**<br>
+- Once you give appropriate permissions just hit next and in the next page you just have to give a name to the role and hit create and your new role will be created.
+
 ### How to register a table in AWS glue using AWS crawler?
 **STEP 1:**<br>
 Go to AWS glue and on the side panel you will find the option named crawlers press this opiton button. After pressing this button you will be greeted with the crawler page.
 
 **STEP 2:**<br>
 In this crawler page you will see create crawler button by pressing this button you will greeted with another screen create crawler page.
+
+**STEP 3:**<br>
+- In set crawler properties page give your crawler a name and hit next button
+
+![set_crawler_properties](images/set_crawler_properties.png)
+
+**STEP 4:**<br>
+- Here in this page I have to set the data sources : Just click on ```add data sources``` button
+
+![choose_data_source_and_classifiers](images/choose_data_source_and_classifiers.png)
+
+- A new ```add data sources``` pop up will open
+
+![add_source_pop_up](images/add_source_pop_up.png)
+
+- Here in this add data sources pop up I am going to set S3 location and hit next after saving the S3 bucket location in that pop up.
+- After hitting next you will be greeted with Configure security settings
+
+![choose_s3_path](images/choose_s3_path.png)
+
+**STEP 5:**<br>
+- In Configure security settings page you will have to attach the IAM role that you created earlier to this crawler.
+- If you have not created the IAM role then this page will provide you with an option to create a new IAM role right then and there but in this case that role will only have the AWSGlueServiceRole permission and not AmazonS3FullAccess which if not carefull can cause problem down the line.
+
+**STEP 6:**<br>
+- Attach the database and tell the crawler what should be your table name even though it is optional and hit create.
+- Your new crawler will be created and after creation hit run 
+- After the successful run of the crawler the table will be created in AWS glue catalog.
+
+#### **Error I faced when ingesting data from csv files using crawler** <br>
+- In my case the table that it generated was not right for some reason It added the column names as col_1, col_2 etc.. and the actual column names were inserted as the first row in the table.
+- ![error_when_ingesting_data_via_crawler](images/error_when_ingesting_data_via_crawler.png)
+
+
+
+
+
 
 

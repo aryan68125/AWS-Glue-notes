@@ -5,6 +5,8 @@ This is a notes on AWS Glue for data engineers.
 ## Dataset used:
 https://github.com/darshilparmar/uber-etl-pipeline-data-engineering-project/blob/main/data/uber_data.csv
 
+## AWS CLI : 
+AWS CLI docs : https://docs.aws.amazon.com/cli/latest/userguide/cli-usage-commandstructure.html
 
 ## Topics to cover : 
 - AWS S3
@@ -129,7 +131,7 @@ https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html
 - Always create folders when working with S3
 - We should not work on file level in data egineering we should always work on folder level.
 
-### AWS Glue Catalog
+## AWS Glue Catalog
 Suppose you a data stored in csv files and that csv file is stored in the S3 bucket and you want to query this data using SQL. <br>
 Normally this is not possible because csv is just a text file how can someone query data using SQL stored in csv files. Csv files are not a structured data <br>
 Whenever you use SQL to query data that data needs to be a structured data i.e rows and columns <br>
@@ -167,6 +169,7 @@ Table metadata lives in the catalog but the real data is stored in the S3 bucket
 amazon athena docs link : <br>
 https://docs.aws.amazon.com/athena/
 
+## AWS Athena
 #### How to create External table using Athena.
 External table is the same as externally managed tables that I read in databricks.
 
@@ -469,7 +472,7 @@ SELECT * FROM uber_data_external_table WHERE TRY_CAST(tip_amount AS DOUBLE) > 5;
         - CI/CD-controlled analytics tables
     - Managed CTAS are not pipeline safe.
 
-**External CTAS VS Managed CTAS** <br>
+#### **External CTAS VS Managed CTAS** <br>
 
 | Aspect              | Managed CTAS   | External CTAS |
 | ------------------- | -------------- | ------------- |
@@ -486,6 +489,10 @@ SELECT * FROM uber_data_external_table WHERE TRY_CAST(tip_amount AS DOUBLE) > 5;
     - Owns both metadata and data
     - Treats it as fully lifecycle-managed
     - So when I drop a managed table in databricks then it not only is able to delete the metadata of the table but also its actual data.
+        - How you drop a managed CTAS
+        ```sql
+        DROP TABLE uber_data_most_tipped_filtered_managed_table;
+        ```
 - But in AWS the behaviour is different. Even if you delete the Managed table in AWS athena your managed table data in S3 will not be deleted because:
     - Athena is a query engine only
     - Athena is serverless
@@ -502,14 +509,40 @@ SELECT * FROM uber_data_external_table WHERE TRY_CAST(tip_amount AS DOUBLE) > 5;
         - Athena deletes the managed table's metadata
         - Athena does not deletes the S3 objects.
         - S3 is an independednt service of Athena i.e Athena does not assumes it owns the S3 bucket.
-- **So we can say that the difference between the managed and external table in case of Athena is that:
+- **So we can say that the difference between the managed and external table in case of Athena is that:**
     - When creating external table you have to tell Athena where to store your query result
     - When creating managed table you don't have to tell Athena where to store the query result it will automatically store the query result in the S3 bucket that you set in the Athena's settings**
 
 Athena related docs : https://docs.aws.amazon.com/athena/latest/ug/what-is.html
 
+## AWS Glue Crawlers 
+- Normally when you have data in files lets say a bunch of csv files in S3 and you want to query those csv files using Athena.
+- The only way you do that is by registering those files as a table in AWS Glue catalog using Athena
+    - One of the way to register the tables is to define the schema like I did using the AWS UI where I used bulk add columns option provided under column details section.
+    - This method is only good for when you only have 8 to 10 columns beyond that this method doesn't make any sense.
+    - Suppose when we do not want to prune the columns and we simple want to do the lift and shift and during the lift and shift we find out the number of columns are really really huge lets say 100 columns are there in the table.
+    - Writing 100s of columns manually is not possible in this case.
+- This is where the concept of crawler comes into the picture.
+    - Now when we use crawler we can just use it to crawl through all of the csv files where our actual data is present (It has the capability to crawl through multiple hirerachial folders : In form of partitions we have to crawl through the hirerachial folders)
+    - This crawler will crawl through all of the files and this will infer the schema (It will guess which column should be of which type) and it will automatically register this table in AWS glue catalog.
+    - Creawler is also used for schema evolution
+        - Suppose we have recieved a file in day 1 where the file has 100 columns and in day 2 we recieve a file where the file has 101 columns instead of 100, this is called schema evolution.
+        - We just have to say it to our crawler that if you see any other column just add it to the table.
+        - It can literally infer the schema whenever you want.
 
+#### NOTE:
+- When I was registering a managed or external table in AWS glue catalog from data files stored in S3 I was able to do that because I was the root user and as a root user I had the permissions to access the S3 bucket and Glue catalogs etc. 
+- But when I try to register the crawler to register the managed or external tables using the data files stored in S3 bucket then I will have to give appropriate permissions to crawler to register the table on my behalf.
+- By default crawler won't be able to see anything in S3 by itself because S3 is fully secured and crawler also doesn't have any permissions to execute anything in AWS glue.
+- This means crawler cannot do anything without IAM (permissions)
+- IAM is a component of AWS which allows us to provide access to users and services within the AWS ecosystem.
+- So a crawler must carry the access (IAM aka Role) under the hood and this access is actually carry the permissions for AWS glue and S3 bucket.
 
-#### Manual:
+### How to register a table in AWS glue using AWS crawler?
+**STEP 1:**<br>
+Go to AWS glue and on the side panel you will find the option named crawlers press this opiton button. After pressing this button you will be greeted with the crawler page.
+
+**STEP 2:**<br>
+In this crawler page you will see create crawler button by pressing this button you will greeted with another screen create crawler page.
 
 

@@ -5,7 +5,8 @@ This is a notes on AWS Glue for data engineers.
 ## Dataset used:
 https://github.com/darshilparmar/uber-etl-pipeline-data-engineering-project/blob/main/data/uber_data.csv
 
-## AWS CLI : 
+## AWS CLI :
+AWS CLI setup documentation : <br>
 AWS CLI docs : https://docs.aws.amazon.com/cli/latest/userguide/cli-usage-commandstructure.html
 
 ## Topics to cover : 
@@ -120,7 +121,7 @@ AWS Identity and Access Management (IAM) is a web service for securely controlli
 Docs link related to IAM in AWS docs : <br>
 https://docs.aws.amazon.com/iam/
 
-**what is AWS S3?** <br>
+**What is AWS S3?** <br>
 Amazon Simple Storage Service (Amazon S3) is an object storage service that offers industry-leading scalability, data availability, security, and performance. Customers of all sizes and industries can use Amazon S3 to store and protect any amount of data for a range of use cases, such as data lakes, websites, mobile applications, backup and restore, archive, enterprise applications, IoT devices, and big data analytics <br>
 - AWS S3 bucket means our data lake
 - Bucket means object storage i.e I can upload anything

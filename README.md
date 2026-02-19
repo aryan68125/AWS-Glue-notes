@@ -644,6 +644,8 @@ In this crawler page you will see create crawler button by pressing this button 
 - The only way is to delete the csv file from the source , delete the data where the query results are stored and then re-run the classifier.
 
 
+## AWS Visual ETL
+https://youtu.be/Pigx0gReuT4?t=7489
 
 
 

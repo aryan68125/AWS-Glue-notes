@@ -669,6 +669,14 @@ To solve this issue you will have to create a file and push it into the repo the
 You will generally not have to set the version control related stuff in your pipeline you will simply create a new branch and set that branch to it but you should know it.
 
 
+## How to trigger crawlers on file arrival
+### Configure your S3 bucket
+#### Step 1 : Create an event notification
+Go to Buckets > aws_bucket_name > propeties > event notifications
+![even_notification_s3](images/even_notification_s3.png)
+
+Create a new event notification for your S3 bucket
+![create_s3_event_notification](images/create_s3_event_notification.png)
 
 
 

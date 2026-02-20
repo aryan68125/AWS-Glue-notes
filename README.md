@@ -645,7 +645,7 @@ In this crawler page you will see create crawler button by pressing this button 
 
 
 ## AWS Visual ETL
-https://youtu.be/Pigx0gReuT4?t=7489
+
 
 
 

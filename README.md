@@ -679,7 +679,7 @@ Create a new event notification for your S3 bucket
 ![create_s3_event_notification](images/create_s3_event_notification.png)
 
 
-
+create a Lambda function 
 
 
 

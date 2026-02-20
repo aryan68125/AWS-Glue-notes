@@ -645,6 +645,18 @@ In this crawler page you will see create crawler button by pressing this button 
 
 
 ## AWS Visual ETL
+AWS Visual ETL is a blend of data factory and data flows. <br>
+![AWS_Visual_ETL](images/AWS_Visual_ETL.png)
+
+- This is the visual editor where you define your ETL jobs. This is visual ETL builder with No code philosophy. 
+- Keep in mind eveything you do in this visual canvas there is a script behind it. The script is being generated behind the scene dynamically based on the componenets you choose and set in your ETL pipeline when desinging the ETL pipeline using this AWS visual ETL tool.
+- In here we work with apache spark under the hood when using this tool using the low or no code philosophy.
+
+### Setting up version control for ETL pipeline
+![version_control](images/version_control.png)
+One thing to note is that when setting up your version control you must have a main branch and if you newly created a repository on github then your branch doesn't exists so you may get an error when trying to save the job.
+
+To solve this issue you will have to create a file and push it into the repo the moment you do it the your AWS visual ETL version control tool automatically picks up the main branch hence you are now able to set a branch to which the code will be pushed to.
 
 
 

@@ -866,4 +866,75 @@ def lambda_handler(event, context):
 - Inside the advanced options set how AWS must handle the table updates if the changes in schema occurs (schema evolution handling)
 - Last but not least set the crawler shcedule I have set it to on demand.
 
+## Creating an end-to-end ETL pipeline from source to dashboard
+```bash
+Sources (OLTP DB, CSV, APIs, logs)
+        ↓
+Ingestion Layer (Glue / Kinesis / DMS)
+        ↓
+Raw S3 (Bronze)
+        ↓
+Transformation (Glue / Spark / dbt)
+        ↓
+Curated S3 (Silver/Gold)
+        ↓
+Athena / Redshift
+        ↓
+QuickSight Dashboard
+```
+
+Implement this tomorrow 
+use this code for analysis make sure that you are able to provide data according to this so that analysis can be completed and the final curated data can be used in AWS dashboard use this notebook as a reference which transformation to use when.
+https://www.kaggle.com/code/mhassansaboor/amazon-sales-insights-strategy
+
+## Partition data in S3 bucket
+### What is Data pruning?
+Data pruning means : Skipping irrelevant data so the system doesn't scan unnecessary files or blocks.
+
+In simple terms . 
+- Instead of reading everything the engine reads only what's needed.
+
+**Why it matters?** <br>
+- In systems like Athena , Spark, Redshift spectrum etc.
+- You pay based on: 
+    - How much data is scanned.
+- So pruning directly reduces:
+    - Query time 
+    - Cost
+    - Resource usage
+
+**What Is Partitioning?** <br>
+- Partitioning means:
+     - Physically dividing data into folders (or logical segments) based on a column.
+- ```bash
+s3://sales-data/
+    year=2024/
+        month=01/
+        month=02/
+    year=2025/
+        month=01/
+```
+- Each partition holds only data for that value.
+
+**How Partitioning Enables Pruning?** <br>
+```sql
+SELECT *
+FROM sales
+WHERE year = 2025;
+```
+- If data is partitioned by year, Athena:
+    - Looks only inside year=2025/
+    - Ignores year=2024/
+- This is called:
+    - Partition Pruning
+- The engine prunes away irrelevant partitions.
+
+**Without Partitioning** <br>
+If everything is stored in one folder:
+- Athena must:
+    - Scan entire dataset
+    - Even if you only need 2025
+- That means:
+    - More cost
+    - Slower queries
 

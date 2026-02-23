@@ -670,6 +670,83 @@ You will generally not have to set the version control related stuff in your pip
 
 
 ## How to trigger crawlers on file arrival
+### Architecture
+```bash
+S3 (new file)
+   ↓  (Event notification)
+Lambda
+   ↓
+Glue Crawler (StartCrawler API)
+   ↓
+Glue Data Catalog updated
+   ↓
+Athena ready
+```
+
+### Create an IAM role for Lambda function
+For this I will be needing an IAM role with a custom policy. 
+Policy that I require is this : 
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "glue:StartCrawler",
+        "glue:GetCrawler",
+        "glue:StopCrawler"
+      ],
+      "Resource": "arn:aws:glue:ap-south-1:YOUR_ACCOUNT_ID:crawler/crawler_demo"
+    }
+  ]
+}
+```
+along with this custom policy I will also be needing AmazonS3FullAccess policy provided my AWS
+
+**STEP 1 :** 
+- Create a custom policy which gives permissions to other AWS services (in this my Lambda function) to execute and run my AWS glue crawler. <br>
+- Go to the side panel > policies > create policy
+![policy_page](images/IAM/policy_page.png)
+
+**STEP 2:** 
+- Here in the create policy page you will see specify permissions section.
+- Toggle from visual to JSON here you will have to paste this JSON code that will define your custom policy
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "glue:StartCrawler",
+        "glue:GetCrawler",
+        "glue:StopCrawler"
+      ],
+      "Resource": "arn:aws:glue:ap-south-1:YOUR_ACCOUNT_ID:crawler/crawler_demo"
+    }
+  ]
+}
+```
+![specify_permission](images/IAM/specify_permission.png)
+
+**STEP 3 :**
+- In review and create page you will have to provide the policy name and description what your custom policy does 
+- After that hit create policy button
+![review_and_create_policy](images/IAM/review_and_create_policy.png)
+
+**STEP 4 :**
+- After you have created your custom policy you will be able to search it using the name that you gave to your policy
+- For demo purpose I have created a custom policy with a name called ```test_policy```
+![search_custom_policy](images/IAM/search_custom_policy.png)
+
+**NOTICE :** I have created a custom policy named ```AWSGlueCrawlerPermissionPolicy``` this is one of the policy that will be requiring by the IAM role that I will be attaching to my lambda function for it work properly and trigger my crawler when new files arrive in my S3 bucket.
+
+**STEP 5:** 
+- Now I am going to create a new IAM role.
+- Go to the side panel > Roles > create role
+![]()
+
 ### Configure your S3 bucket
 #### Step 1 : Create an event notification
 Go to Buckets > aws_bucket_name > propeties > event notifications

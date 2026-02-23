@@ -745,19 +745,95 @@ along with this custom policy I will also be needing AmazonS3FullAccess policy p
 **STEP 5:** 
 - Now I am going to create a new IAM role.
 - Go to the side panel > Roles > create role
-![]()
+![IAM_role_create](images/IAM/IAM_role_create.png)
 
-### Configure your S3 bucket
-#### Step 1 : Create an event notification
-Go to Buckets > aws_bucket_name > propeties > event notifications
-![even_notification_s3](images/even_notification_s3.png)
+**STEP 6:**
+- In Trusted entity type section here I will select AWS service 
+- Under use case section I will select Lambda option and then hit next
+![select_trusted_entity](images/IAM/select_trusted_entity.png)
 
-Create a new event notification for your S3 bucket
-![create_s3_event_notification](images/create_s3_event_notification.png)
+**STEP 7:** 
+- In Add permissions page under permission policies section search for you custom policy that you created earlier in my case my custom policy name is ```AWSGlueCrawlerPermissionPolicy``` and then select that policy to be included in the IAM role that you are creating.
+![search_and_select_custom_policy](images/IAM/search_and_select_custom_policy.png)
+- Now you will have to search for ```s3``` You will have to add this ```AmazonS3FullAccess``` policy to your role
+- After adding these two policies to your IAM role you can hit next
+![s3_bucket_policy](images/IAM/s3_bucket_policy.png)
 
+**STEP 8:**
+- After hitting next you will be greeted to a page where you will have to provide the name and description of what this role does.
+![name_review](images/IAM/name_review.png)
 
-create a Lambda function 
+**NOTICE :** In my case I have already created a role with a name ```TriggerGlueCrawler``` for my lambda function where I have attached my custom policy and AmazonS3FullAccess policy and made sure that my lambda function has approprioate permissions to function as intended.
 
+### Create a Lambda function
+- After the IAM role for this Lambda function is created successfully I will now create the lambda function itself.
+- This lambda function will be responsible for triggering my AWS glue crawler programatically using a python script when a new file arrives in the S3 bucket.
+
+**STEP 1:**
+- Go to Lambda function page my searching it in the search box
+- Go to the side panel > Functions > Create functions page.
+![create_lambda_function](images/Lambda_function/create_lambda_function.png)
+
+**STEP 2:**
+- In this page provide function name 
+- Select I will be selecting python as a runtime
+- Make sure you don't select durable execution option otherwise your lambda function won't work without setting the destination.
+- Under the change default execution role select the option ```Use existing role```
+    - From the drop down menu select the role that you created earlier in my case the role that I created was ```TriggerGlueCrawler``` hence I will be selecting that.
+- After this click on create function 
+![create_lambda_function_page](images/Lambda_function/create_lambda_function_page.png)
+
+**STEP 3:**
+- Write Lambda function in this page and click on deploy button after you have written your code to trigger the crawler service 
+![write_lambda_code](images/Lambda_function/write_lambda_code.png)
+- This code below will start AWS glue crawler when this executes in Lambda function.
+- After this click on create function button and your lambda function will be created
+```python
+
+import boto3
+
+def lambda_handler(event, context):
+    
+    crawler_name = "customers_data_silver_table"
+    glue = boto3.client('glue')
+    
+    crawler = glue.get_crawler(Name=crawler_name)
+    
+    state = crawler['Crawler']['State']
+    
+    if state == 'READY':
+        glue.start_crawler(Name=crawler_name)
+        return {
+            'statusCode': 200,
+            'body': f"Crawler {crawler_name} started."
+        }
+    else:
+        return {
+            'statusCode': 200,
+            'body': f"Crawler already running."
+        }
+```
+
+**STEP 4:** **Create an event Listner for S3 bucket**
+- Now you will have to set the trigger for your lambda function 
+- For this there are two options either you set the trigger by using the menu and options provided inside the lambda function itself or you can do it from S3 bucket
+- I chose to attach the lambda function to an event (trigger) after creating it in the S3 bucket properties 
+- Go to Amazon S3 > Buckets > properties
+- Under the Event notifications menu you will see create event notification button click it to create a new event notification.
+![Event_notifications](images/Lambda_function/Event_notifications.png)
+
+**STEP 5:** **Attach the previously created Lambda function to that S3 bucket event**
+- After clicking the create event notification button you will be greeted with this page.
+- In this page you need to provide your event name , set and configure the event types, and last but not least you will have to set the lambda function that you created just now to this s3 bucket event essentially tie this as a trigger to the lambda function
+-![create_event_s3_page](images/Lambda_function/create_event_s3_page.png)
+![create_event_s3_page2](images/Lambda_function/create_event_s3_page2.png)
+
+ **So how this works ?** <br>
+- The moment my ETL pipeline reads the csv file from the ingestion s3 directory it processes the data and then creates parquet files in this S3 bucket. 
+- The moment new parquet files arrive after a successfull ETL execution the S3 put event triggers the lambda function which has the python script to trigger the AWS glue crawler. 
+- Which in turns creates metadata in AWS glue catalog using those parquet files and now the data in those files can be queried using AWS Athena using sql.
+
+### Create an AWS glue crawler
 
 
 

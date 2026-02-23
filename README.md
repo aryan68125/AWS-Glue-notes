@@ -834,6 +834,36 @@ def lambda_handler(event, context):
 - Which in turns creates metadata in AWS glue catalog using those parquet files and now the data in those files can be queried using AWS Athena using sql.
 
 ### Create an AWS glue crawler
+**STEP 1:**
+- Create a new crawler
+- This crawler must crawl through a bunch of parquet files in AWS S3 bucket and register their metadata and create a table in AWS glue catalog. 
+- This will give us the ability to use AWS Athena to query the data from the parquet file present in S3 bucket.
+- Go to AWS glue > side bar > crawlers > create crawler
+![create_crawler](images/aws_glue/crawler/create_crawler.png)
 
+**STEP 2:**
+- After you click create crawler button you will be greeted with this page.
+- Here you will set the name and description for your crawler
+- After that hit next
+![set_crawler_properties](images/aws_glue/crawler/set_crawler_properties.png)
+
+**STEP 3:**
+- After you hit next you will be greeted with this page.
+- Here in this page you will add the source where you will have to provide the details regarding your Source s3 bucket location and the folders inside it where the files exists.
+- If you are registering the metadata of a table where the data is in csv file then you will have to compulsory create a classifier if you haven't already created one
+- But here in this case since the files are in parquet format we don't have to set any classifier.
+![set_source_classifier](images/aws_glue/crawler/set_source_classifier.png)
+
+**STEP 4:**
+- Here in this page you will have to attach an IAM role that will have appropriate policies attached to it and will allow the crawler to access S3 bucket and AWS glue catalog for it to be able to read the parquet file and register the metadata related to those files in AWS glue catalog so that Athena can use it to query data from those files using SQL.
+- It is a best practice that you create your IAM role before hand 
+- This IAM role must have ```AWSGlueServiceRole``` and ```AmazonS3FullAccess``` policies attached to it. 
+![configure_security](images/aws_glue/crawler/configure_security.png)
+
+**STEP 5:**
+- Here you will have to set the output and scheduling 
+- Select the database that you created in your AWS glue catalog
+- Inside the advanced options set how AWS must handle the table updates if the changes in schema occurs (schema evolution handling)
+- Last but not least set the crawler shcedule I have set it to on demand.
 
 

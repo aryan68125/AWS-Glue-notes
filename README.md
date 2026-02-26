@@ -866,7 +866,9 @@ def lambda_handler(event, context):
 - Inside the advanced options set how AWS must handle the table updates if the changes in schema occurs (schema evolution handling)
 - Last but not least set the crawler shcedule I have set it to on demand.
 
-## Creating an end-to-end ETL pipeline from source to dashboard
+
+
+## Creating an end-to-end ETL pipeline from source to dashboard (TODO)
 ```bash
 Sources (OLTP DB, CSV, APIs, logs)
         ↓

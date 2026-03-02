@@ -965,7 +965,78 @@ Here are some of the custom policies I experimented with and it worked like a ch
     - You must also set job bookmarks to enable so that ETL only reads new files and ignores older files in S3 that have already been processed when it gets triggered.
     - ![enable_bookmarks](images/aws_glue/visualETL/enable_bookmarks.png)
     - We are doing this to save us from un-necessary costing that happens when the files are re-processed even when it is not required. Its a waste of precious compute resources.
+- Your AWS glue visual ETL pipeline should look something like this.
+![visual_ETL_pipeline](images/aws_glue/visualETL/visual_ETL_pipeline.png)
+- Set data source S3 bucket (Setting up data ingestion node)
+![set_data_source_s3](images/aws_glue/visualETL/set_data_source_s3.png)
+- Here I have used SQL node to clean data (Setting up data cleaning node)
+```sql
+SELECT
+    product_id,
+    product_name,
+    category,
+    about_product,
+    user_id,
+    user_name,
+    review_id,
+    review_title,
+    review_content,
+    img_link,
+    product_link,
 
+    -- discounted_price: ₹149 → 149.0
+    CAST(
+        REGEXP_REPLACE(discounted_price, '[^0-9.]', '')
+        AS DOUBLE
+    ) AS discounted_price,
+
+    -- actual_price: ₹1,000 → 1000.0
+    CAST(
+        REGEXP_REPLACE(actual_price, '[^0-9.]', '')
+        AS DOUBLE
+    ) AS actual_price,
+
+    -- discount_percentage: 85% → 85.0
+    CAST(
+        REGEXP_REPLACE(discount_percentage, '[^0-9.]', '')
+        AS DOUBLE
+    ) AS discount_percentage,
+
+    -- rating: 3.9 → 3.9
+    CAST(
+        REGEXP_REPLACE(rating, '[^0-9.]', '')
+        AS DOUBLE
+    ) AS rating,
+
+    -- rating_count: 24,871 → 24871
+    CAST(
+        REGEXP_REPLACE(rating_count, '[^0-9]', '')
+        AS INT
+    ) AS rating_count
+
+FROM myDataSource;
+```
+- Use Drop Null Fields node to drop the rows that have all the columns as null (This is a pre-build node provided by AWS)
+![drop_null_field_node](images/aws_glue/visualETL/drop_null_field_node.png)
+- Set the target to be an S3 bucket using data target S3 bucket node 
+    - Here you will have to set the file format in which you want to get output into. The best option to go with is parquet format since it has the actual data along with the table's metadata inside of it. 
+    - In the data catalog options if you want your visual ETL pipeline to automatically register the table in AWS glue catalog so that you can use athena to query the table then you will have to go with this option ```Create a table in the Data Catalog and on subsequent runs, keep existing schema and add new partitions```
+        - We want to prevent schema changing on its own. We would rather want our pipeline to fail than to cause issues as listed below:
+            - Senario 1 the data type of a column changes then 
+                - Athena queries may fail
+                - Downstream dashboards break
+                - BI tools complain
+                - Historical partitions may mismatch types
+            - Senario 2 Column is removed 
+                - Older partitions still have that column but the new one's won't hence again breaking the downstream services that depeneds on that particular column
+                - Athena behaves inconsistently
+            - Senario 3 A new column is added
+                - This one is usually safe — but even then, you should manage schema intentionally.
+    - ![target_s3_set_format](images/aws_glue/visualETL/target_s3_set_format.png)
+    - Next you will have to set the database that you must have created in AWS glue data catalog
+    - Then you will have to set the table name 
+    - Add partition key if you think its needed
+    - ![target_s3_set_database_table_name_and_partition](images/aws_glue/visualETL/target_s3_set_database_table_name_and_partition.png)
 
 ## Creating an end-to-end ETL pipeline from source to dashboard (TODO)
 ```bash

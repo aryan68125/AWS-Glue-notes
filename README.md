@@ -866,21 +866,9 @@ def lambda_handler(event, context):
 - Inside the advanced options set how AWS must handle the table updates if the changes in schema occurs (schema evolution handling)
 - Last but not least set the crawler shcedule I have set it to on demand.
 
-## Incremental Load
-- Suppose I have csv file named ```day1.csv``` file and on day 1 my glue pipeline ingested data from it.
-- Then came day2 now there is another file ```day2.csv``` file and on day 2 my glue pipeline ran to ingest data from it but now along with the data in ```day2.csv``` file ```day1.csv``` file is also ingested.
-- This is the default behaviour of AWS glue.
-- This is not a desirable behaviour because this will cause unecessary data redundancy issue and will cause data management issues down in the long run as our data grows in size.
-- In order to mitigate this issue we can use the option called Idempotency.
-- Idempotancy means exactly once behaviour. We can achieve it using bookmarks.
-- What a bookmark does is it keeps track of the data that has already been ingested by AWS glue visual ETL pipeline and makes sures that the ingestion process only runs for new files only.
+## NOTE :
+Here are some of the custom policies I experimented with and it worked like a charm hence I am including it here just in case if you need it
 
-### Implementing Incremental Load 
-- Things that I want to implement here:
-    - Implement automatic visual ETL pipeline trigger when a new file arrives in S3 bucket automatically using Lambda function.
-    - Then after ingestion again use Lambda funtion to register the data in AWS glue catalog so that we can use Athena to use SQL to query the data in parquet files prsent in the S3 bucket.
-### Preparing IAM roles for the services
-**STEP 1:** Create policies that can be attached to IAM roles so that 
 - **Create a policy that gives permission to a service to start and get glue crawler**
 ```json
 {
@@ -929,6 +917,21 @@ def lambda_handler(event, context):
     ]
 }
 ```
+
+## Incremental Load
+- Suppose I have csv file named ```day1.csv``` file and on day 1 my glue pipeline ingested data from it.
+- Then came day2 now there is another file ```day2.csv``` file and on day 2 my glue pipeline ran to ingest data from it but now along with the data in ```day2.csv``` file ```day1.csv``` file is also ingested.
+- This is the default behaviour of AWS glue.
+- This is not a desirable behaviour because this will cause unecessary data redundancy issue and will cause data management issues down in the long run as our data grows in size.
+- In order to mitigate this issue we can use the option called Idempotency.
+- Idempotancy means exactly once behaviour. We can achieve it using bookmarks.
+- What a bookmark does is it keeps track of the data that has already been ingested by AWS glue visual ETL pipeline and makes sures that the ingestion process only runs for new files only.
+
+### Implementing Incremental Load 
+- Things that I want to implement here:
+    - Implement automatic visual ETL pipeline trigger when a new file arrives in S3 bucket automatically using Lambda function.
+    - Then after ingestion again use Lambda funtion to register the data in AWS glue catalog so that we can use Athena to use SQL to query the data in parquet files prsent in the S3 bucket.
+### Preparing IAM roles for the services
 **STEP 1:** Create an IAM role to make sure that AWS Lambda function has proper permissions to trigger AWS visual ETL pipeline when put event is triggered in AWS S3 bucket.
 - Create a custom policy for this IAM role. You are free to use the code below to attach it to the Role that you will be creating for this Lambda function.
 - It gives appropriate permissions to allow the lambda function to trigger AWS glue visual ETL pipeline.
@@ -944,6 +947,7 @@ def lambda_handler(event, context):
   ]
 }
 ```
+- Now attach this policy to the IAM role which will then be used by the lambda function that is going to trigger this AWS glue visual ETL when new files arrives in the source S3 bucket.
 
 
 

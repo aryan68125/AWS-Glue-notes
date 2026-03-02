@@ -951,7 +951,29 @@ Here are some of the custom policies I experimented with and it worked like a ch
 
 **STEP 2:** Create an IAM role for AWS glue 
 - This role allows AWS glue to access S3 bucket and It also allows AWS Glue to run jobs, crawlers, and workflows.
-- Here in this case we don't need to create a custom policy we can simply use AWS managed policies ```AmazonS3FullAccess``` and ```AWSGlueServiceRole``` 
+- Here in this case we don't need to create a custom policy we can simply use AWS managed policies ```AWSGlueServiceRole``` 
+    - For AWS access policy use this json instead to create a custom policy to allow glue to access source S3 securely
+    ```json
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:ListBucket"
+              ],
+              "Resource": [
+                "arn:aws:s3:::aws-glue-s3-bucket-one",
+                "arn:aws:s3:::aws-glue-s3-bucket-one/*",
+                "arn:aws:s3:::data-sink-one",
+                "arn:aws:s3:::data-sink-one/*"
+              ]
+            }
+          ]
+        }
+    ```
 - Once this role is created we have to attach it to our AWS glue visual ETL job that we have created so that it has appropriate permissions to carry out its job properly.
 ### Create AWS glue visual ETL job
 - This AWS glue visual ETL job is responsible for : 

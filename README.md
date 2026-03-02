@@ -1048,11 +1048,40 @@ FROM myDataSource;
     - I want the pipeline to only run when a new csv file arrives in the source S3 bucket.
 - One of the ways we can do this is utilizing a Lambda function that triggers this pipeline when a new file arrives in the source S3 bucket
 
-**STEP 1:** 
-- Create a lambda function to trigger AWS glue visual ETL pipeline 
-- 
+**STEP 1:**
+- First we have to create a role for our lambda function with appropirate policies attached to it
+- ![create_role_for_lambda_function](images/aws_glue/Lambda_function/create_role_for_lambda_function.png)
+- Create a policy with this rule
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "glue:StartJobRun",
+            "Resource": "arn:aws:glue:ap-south-1:406868976171:job/ingest_sales_data"
+        }
+    ]
+}
+```
+- Attach that policy to this IAM role 
+- You will also need to attach this ```AWSLambdaBasicExecutionRole``` policy so that lambda function could actually write logs to cloudwatch service.
 
 **STEP 2:** 
+- Create a lambda function to trigger AWS glue visual ETL pipeline 
+- First we have to set the name for our Lambda function
+- Choose the runtime (your preferred programming language) 
+- Select the architecture you want to use on which your lambda function will run on
+- ![set_lambda_function_name](images/aws_glue/Lambda_function/set_lambda_function_name.png)
+- Attach IAM role to this Lambda function in order to make sure that it has permission to actually start AWS glue visual ETL pipeline 
+- ![attach_IAM_role_to_lambda](images/aws_glue/Lambda_function/attach_IAM_role_to_lambda.png)
+- Write the code to trigger ETL pipeline in glue for your lambda function here in this page
+- ![write_code_to_trigger_aws_glue_ETL](images/aws_glue/Lambda_function/write_code_to_trigger_aws_glue_ETL.png)
+- Set Lambda Environment Variable
+- ![add_lambda_function_env_vars](images/aws_glue/Lambda_function/add_lambda_function_env_vars.png)
+
+
+**STEP 3:** 
 - Create an event notification in the source S3 bucket where the files are dumped by the upstream applications/services and attached the lambda function that you created earlier to this event
 - ![create_source_s3_event_notification](images/aws_glue/automate_visual_ETL/create_source_s3_event_notification.png)
 - Set the event name and event type 

@@ -879,7 +879,56 @@ def lambda_handler(event, context):
 - Things that I want to implement here:
     - Implement automatic visual ETL pipeline trigger when a new file arrives in S3 bucket automatically using Lambda function.
     - Then after ingestion again use Lambda funtion to register the data in AWS glue catalog so that we can use Athena to use SQL to query the data in parquet files prsent in the S3 bucket.
-### Preparing IAM roles for the services 
+### Preparing IAM roles for the services
+**STEP 1:** Create policies that can be attached to IAM roles so that 
+- **Create a policy that gives permission to a service to start and get glue crawler**
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "glue:StartCrawler",
+                "glue:GetCrawler"
+            ],
+            "Resource": "arn:aws:glue:ap-south-1:406868976171:crawler/RegisterParquetFiles"
+        }
+    ]
+}
+```
+- **Create a policy to allow services to access glue visual ETL**
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "glue:StartJobRun",
+            "Resource": "arn:aws:glue:ap-south-1:406868976171:job/Process_Sales_data"
+        }
+    ]
+}
+```
+- **Create SQS policy to allow services to access SQS messages (This is not needed but I am mentioning it here just in case you want to go this route)**
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "Statement1",
+            "Effect": "Allow",
+            "Action": [
+                "sqs:ReceiveMessage",
+                "sqs:DeleteMessage",
+                "sqs:GetQueueAttributes",
+                "sqs:ChangeMessageVisibility"
+            ],
+            "Resource": "arn:aws:sqs:ap-south-1:406868976171:S3FileArrivalQueue"
+        }
+    ]
+}
+```
 **STEP 1:** Create an IAM role to make sure that AWS Lambda function has proper permissions to trigger AWS visual ETL pipeline when put event is triggered in AWS S3 bucket.
 - Create a custom policy for this IAM role. You are free to use the code below to attach it to the Role that you will be creating for this Lambda function.
 - It gives appropriate permissions to allow the lambda function to trigger AWS glue visual ETL pipeline.

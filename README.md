@@ -949,8 +949,22 @@ Here are some of the custom policies I experimented with and it worked like a ch
 ```
 - Now attach this policy to the IAM role which will then be used by the lambda function that is going to trigger this AWS glue visual ETL when new files arrives in the source S3 bucket.
 
-
-
+**STEP 2:** Create an IAM role for AWS glue 
+- This role allows AWS glue to access S3 bucket and It also allows AWS Glue to run jobs, crawlers, and workflows.
+- Here in this case we don't need to create a custom policy we can simply use AWS managed policies ```AmazonS3FullAccess``` and ```AWSGlueServiceRole``` 
+- Once this role is created we have to attach it to our AWS glue visual ETL job that we have created so that it has appropriate permissions to carry out its job properly.
+### Create AWS glue visual ETL job
+- This AWS glue visual ETL job is responsible for : 
+    - Ingesting data from csv file
+    - Cleaning data and converting columns that have numbers into double or integers from string data types accordingly, removing un-necessary symbols.
+    - Saving the file in the parquet file in an output S3 bucket.
+    - Last but not least this ETL must only read new files that arrive in S3 bucket and not the old ones that have already been processed.
+- When saving the job 
+    - It will ask you to attach the IAM role that you created without this it will not allow you to save your AWS glue visual ETL job so this is mandatory.
+    - ![AWS_glue_creation1](images/aws_glue/visualETL/AWS_glue_creation1.png)
+    - You must also set job bookmarks to enable so that ETL only reads new files and ignores older files in S3 that have already been processed when it gets triggered.
+    - ![enable_bookmarks](images/aws_glue/visualETL/enable_bookmarks.png)
+    - We are doing this to save us from un-necessary costing that happens when the files are re-processed even when it is not required. Its a waste of precious compute resources.
 
 
 ## Creating an end-to-end ETL pipeline from source to dashboard (TODO)

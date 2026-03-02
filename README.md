@@ -932,7 +932,7 @@ Here are some of the custom policies I experimented with and it worked like a ch
     - Implement automatic visual ETL pipeline trigger when a new file arrives in S3 bucket automatically using Lambda function.
     - Then after ingestion again use Lambda funtion to register the data in AWS glue catalog so that we can use Athena to use SQL to query the data in parquet files prsent in the S3 bucket.
 ### Preparing IAM roles for the services
-**STEP 1:** Create an IAM role to make sure that AWS Lambda function has proper permissions to trigger AWS visual ETL pipeline when put event is triggered in AWS S3 bucket.
+**STEP 1:** Create an IAM role for Lambda function that starts AWS glue visual ETL pipeline to make sure that it has proper permissions to trigger AWS visual ETL pipeline when put event is triggered in source AWS S3 bucket.
 - Create a custom policy for this IAM role. You are free to use the code below to attach it to the Role that you will be creating for this Lambda function.
 - It gives appropriate permissions to allow the lambda function to trigger AWS glue visual ETL pipeline.
 ```json
@@ -1037,6 +1037,30 @@ FROM myDataSource;
     - Then you will have to set the table name 
     - Add partition key if you think its needed
     - ![target_s3_set_database_table_name_and_partition](images/aws_glue/visualETL/target_s3_set_database_table_name_and_partition.png)
+### NOTE:
+- During testing you may want to ingest the same file again and again but since you have set the bookmark checkbox to be true in your AWS glue visual ETL pipeline it will not read the same file twice 
+- In order to solve this problem you have the capability to reset bookmark for your visual ETL pipeline 
+![reset_bookmark](images/aws_glue/visualETL/reset_bookmark.png)
+
+### Start AWS glue visual ETL automatically
+- Right now I have to manually run AWS glue visual ETL pipeline 
+- I want to automate this process 
+    - I want the pipeline to only run when a new csv file arrives in the source S3 bucket.
+- One of the ways we can do this is utilizing a Lambda function that triggers this pipeline when a new file arrives in the source S3 bucket
+
+**STEP 1:** 
+- Create a lambda function to trigger AWS glue visual ETL pipeline 
+- 
+
+**STEP 2:** 
+- Create an event notification in the source S3 bucket where the files are dumped by the upstream applications/services and attached the lambda function that you created earlier to this event
+- ![create_source_s3_event_notification](images/aws_glue/automate_visual_ETL/create_source_s3_event_notification.png)
+- Set the event name and event type 
+    - Here I have set the event type to be of PUT type
+    - The PUT type event detects if a new object is created in S3 bucket if yes then it will trigger the lambda function which has the code to start the AWS glue visual ETL pipeline 
+- ![FileArrivalEvent](images/aws_glue/automate_visual_ETL/FileArrivalEvent.png)
+- In the same page if you scroll down you will find the options to attach a lambda function that you created earlier to this event 
+- ![set_lambda_function_here](images/aws_glue/automate_visual_ETL/set_lambda_function_here.png)
 
 ## Creating an end-to-end ETL pipeline from source to dashboard (TODO)
 ```bash

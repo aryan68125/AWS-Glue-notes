@@ -1512,27 +1512,27 @@ In order to make incremental load pipeline production ready there few things I n
 - Create a role that has policies with appropriate permissions for AWS glue catalog so that it can perform its actions properly without any security risk
 - Create a custom policy named ```LimitedS3PermissionPolicy```
     - ```json
-        {
-            "Version": "2012-10-17",
-            "Statement": [
-                {
-                    "Effect": "Allow",
-                    "Action": [
-                        "s3:GetObject",
-                        "s3:PutObject",
-                        "s3:ListBucket"
-                    ],
-                    "Resource": [
-                        "arn:aws:s3:::aws-glue-s3-bucket-one",
-                        "arn:aws:s3:::aws-glue-s3-bucket-one/*",
-                        "arn:aws:s3:::data-sink-one",
-                        "arn:aws:s3:::data-sink-one/*"
-                    ]
-                }
-            ]
-        }
-    ```
-    
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": [
+                            "s3:GetObject",
+                            "s3:PutObject",
+                            "s3:ListBucket"
+                        ],
+                        "Resource": [
+                            "arn:aws:s3:::aws-glue-s3-bucket-one",
+                            "arn:aws:s3:::aws-glue-s3-bucket-one/*",
+                            "arn:aws:s3:::data-sink-one",
+                            "arn:aws:s3:::data-sink-one/*"
+                        ]
+                    }
+                ]
+            }
+        ```
+
 - Create a Role named ```AWSGlueRole```
 - Attach policies to this role 
     - attach ```LimitedS3PermissionPolicy``` custom policy

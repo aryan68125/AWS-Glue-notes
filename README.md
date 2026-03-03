@@ -1338,6 +1338,54 @@ In order to make incremental load pipeline production ready there few things I n
 - Here If you have any pre-configured Event notification in your S3 bucket then delete it We don't need it anymore. 
 - Instead turn on the Amazon event bridge option, this is present just below the event notification option in the properties tab of the S3 bucket.
 ![set_s3_bucket_event_bridge](images/production_grade_glue_implementation/S3_bucket_configurations/set_s3_bucket_event_bridge.png)
+#### Create a Lambda function 
+- This Lambda function will trigger the Visual ETL pipeline
+
+**STEP 1:**
+- Create a role that gives appropirate access rights of the services to make sure that the lambda function works as intended.
+- Create a role named 
+#### Create an EventBridge
+**STEP 1:**
+- Setup trigger events
+![create_event_bridge_1](images/production_grade_glue_implementation/event_bridge_setup/create_event_bridge_1.png)
+- Select the S3 simple storage service for trigger event 
+- Once thats done now use this event pattern filter 
+    - ```json
+    {
+      "source": ["aws.s3"],
+      "detail-type": ["Object Created"],
+      "detail": {
+        "bucket": {
+          "name": ["aws-glue-s3-bucket-one"]
+        },
+        "object": {
+          "key": [{
+            "prefix": "raw_data/sales_data/"
+          }]
+        }
+      }
+    }
+    ```
+    - Here ```"raw_data/sales_data/"``` is the directory inside this S3 where your files are arriving.
+- ![create_event_bridge_2](images/production_grade_glue_implementation/event_bridge_setup/create_event_bridge_2.png)
+
+**STEP 2:**
+- When configuring the targets for the EventBridge make sure that you have disabled the input transformation configuration
+- What this does ? --> Use Target input transformer to customize the text from an event before EventBridge passes the information to the target. When target input transformer is not defined, the original event will be sent to a target.
+- We don't need it here
+![create_event_bridge_3](images/production_grade_glue_implementation/event_bridge_setup/create_event_bridge_3.png)
+
+**STEP 3:**
+- Select target this account since our Lambda function is present in this account only
+![create_event_bridge_4](images/production_grade_glue_implementation/event_bridge_setup/create_event_bridge_4.png)
+- Here make sure that refrain from using your own custom role for your EventBridge instead let AWS create a new Role for your EventBridge on your behalf
+![create_event_bridge_5](images/production_grade_glue_implementation/event_bridge_setup/create_event_bridge_5.png)
+- Setup retry policy for your lambda function that triggers visual ETL when this file arrival PUT event happens in S3 bucket
+- Setup the age of events in hours 
+    - This will set the number of hours an unprocessed event can be kept
+- Here attach your SQS which will serve as DLQ to store messages in case of a failure after the fix is completed the stored messages will be re-processed.
+    - This prevent data loss in case of a failure.
+[create_event_bridge_6](images/production_grade_glue_implementation/event_bridge_setup/create_event_bridge_6.png)
 
 
 ## Creating an end-to-end ETL pipeline from source to dashboard (TODO)

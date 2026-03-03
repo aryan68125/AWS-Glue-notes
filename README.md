@@ -1324,6 +1324,72 @@ Here are some of the custom policies I experimented with and it worked like a ch
 
 ### Implementing Incremental Load (make this implementation production ready)
 In order to make incremental load pipeline production ready there few things I need to implement
+
+#### Proposed architecture for this implementation
+```bash
+                              ┌──────────────────────────┐
+                              │     Upstream System      │
+                              │  (Apps / APIs / Batch)   │
+                              └──────────────┬───────────┘
+                                             │
+                                             ▼
+                              ┌──────────────────────────┐
+                              │   S3 RAW Landing Zone    │
+                              │  (Versioning Enabled)    │
+                              └──────────────┬───────────┘
+                                             │
+                                (S3 PUT Event Notification)
+                                             │
+                                             ▼
+                              ┌──────────────────────────┐
+                              │     EventBridge Rule     │
+                              └──────────────┬───────────┘
+                                             │
+                                             ▼
+                              ┌──────────────────────────┐
+                              │        Lambda Trigger    │
+                              │ - Extract bucket/key     │
+                              │ - Validate event         │
+                              │ - Idempotency check      │
+                              │ - Write metadata record  │
+                              └──────────────┬───────────┘
+                                             │
+                           ┌─────────────────┴──────────────────┐
+                           ▼                                    ▼
+              ┌──────────────────────┐              ┌──────────────────────┐
+              │ DynamoDB Metadata    │              │    SQS (DLQ)         │
+              │ - File processed?    │              │ - Failed events      │
+              │ - Status tracking    │              │ - Replay capability  │
+              └──────────────────────┘              └──────────────────────┘
+                                             │
+                                             ▼
+                              ┌──────────────────────────┐
+                              │   Glue Visual ETL Job    │
+                              │ - Bookmark Enabled       │
+                              │ - File-level ingestion   │
+                              │ - Schema enforcement     │
+                              │ - Data quality rules     │
+                              └──────────────┬───────────┘
+                                             │
+                                             ▼
+                              ┌──────────────────────────┐
+                              │   S3 SILVER Layer        │
+                              │  (Partitioned Parquet)   │
+                              └──────────────┬───────────┘
+                                             │
+                                             ▼
+                              ┌──────────────────────────┐
+                              │   Glue Data Catalog      │
+                              │  (Schema Controlled)     │
+                              └──────────────┬───────────┘
+                                             │
+                                             ▼
+                              ┌──────────────────────────┐
+                              │        Athena            │
+                              │   (Analytics / BI)       │
+                              └──────────────────────────┘
+```
+
 - **Right now I have attached the lambda function that starts visual ETL pipeline is directly attached to the event notification of the source S3 bucket**
     - This is not a reliable way to trigger Lambda functions 
     - S3 events notifications are:

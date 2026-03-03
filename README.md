@@ -1786,7 +1786,7 @@ In order to make incremental load pipeline production ready there few things I n
             response = glue_client.start_job_run(
                 JobName=GLUE_JOB_NAME
             )
-        ```
+            ```
         - It was only taking GLUE_JOB_NAME as an input argument 
         - Hence the lambda function have no idea which file triggered it.
         - In the previous version Glue used to scan for folders (Glue was setup to be a folder-based job)

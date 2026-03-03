@@ -1041,50 +1041,50 @@ Here are some of the custom policies I experimented with and it worked like a ch
 ![set_data_source_s3](images/aws_glue/visualETL/set_data_source_s3.png)
 - Here I have used SQL node to clean data (Setting up data cleaning node)
 ```sql
-SELECT
-    product_id,
-    product_name,
-    category,
-    about_product,
-    user_id,
-    user_name,
-    review_id,
-    review_title,
-    review_content,
-    img_link,
-    product_link,
+    SELECT
+        product_id,
+        product_name,
+        category,
+        about_product,
+        user_id,
+        user_name,
+        review_id,
+        review_title,
+        review_content,
+        img_link,
+        product_link,
 
-    -- discounted_price: ₹149 → 149.0
-    CAST(
-        REGEXP_REPLACE(discounted_price, '[^0-9.]', '')
-        AS DOUBLE
-    ) AS discounted_price,
+        -- discounted_price: ₹149 → 149.0
+        CAST(
+            REGEXP_REPLACE(discounted_price, '[^0-9.]', '')
+            AS DOUBLE
+        ) AS discounted_price,
 
-    -- actual_price: ₹1,000 → 1000.0
-    CAST(
-        REGEXP_REPLACE(actual_price, '[^0-9.]', '')
-        AS DOUBLE
-    ) AS actual_price,
+        -- actual_price: ₹1,000 → 1000.0
+        CAST(
+            REGEXP_REPLACE(actual_price, '[^0-9.]', '')
+            AS DOUBLE
+        ) AS actual_price,
 
-    -- discount_percentage: 85% → 85.0
-    CAST(
-        REGEXP_REPLACE(discount_percentage, '[^0-9.]', '')
-        AS DOUBLE
-    ) AS discount_percentage,
+        -- discount_percentage: 85% → 85.0
+        CAST(
+            REGEXP_REPLACE(discount_percentage, '[^0-9.]', '')
+            AS DOUBLE
+        ) AS discount_percentage,
 
-    -- rating: 3.9 → 3.9
-    CAST(
-        REGEXP_REPLACE(rating, '[^0-9.]', '')
-        AS DOUBLE
-    ) AS rating,
+        -- rating: 3.9 → 3.9
+        CAST(
+            REGEXP_REPLACE(rating, '[^0-9.]', '')
+            AS DOUBLE
+        ) AS rating,
 
-    -- rating_count: 24,871 → 24871
-    CAST(
-        REGEXP_REPLACE(rating_count, '[^0-9]', '')
-        AS INT
-    ) AS rating_count
+        -- rating_count: 24,871 → 24871
+        CAST(
+            REGEXP_REPLACE(rating_count, '[^0-9]', '')
+            AS INT
+        ) AS rating_count
 
-FROM myDataSource;
+    FROM myDataSource;
 ```
 - Use Drop Null Fields node to drop the rows that have all the columns as null (This is a pre-build node provided by AWS)
 ![drop_null_field_node](images/aws_glue/visualETL/drop_null_field_node.png)
@@ -1108,135 +1108,134 @@ FROM myDataSource;
     - Add partition key if you think its needed
     - ![target_s3_set_database_table_name_and_partition](images/aws_glue/visualETL/target_s3_set_database_table_name_and_partition.png)
 - This is the generated script from the visual ETL pipeline 
-
 ```python
-import sys
-from awsglue.transforms import *
-from awsglue.utils import getResolvedOptions
-from pyspark.context import SparkContext
-from awsglue.context import GlueContext
-from awsglue.job import Job
-from awsglue.gluetypes import *
-from awsgluedq.transforms import EvaluateDataQuality
-from awsglue import DynamicFrame
+    import sys
+    from awsglue.transforms import *
+    from awsglue.utils import getResolvedOptions
+    from pyspark.context import SparkContext
+    from awsglue.context import GlueContext
+    from awsglue.job import Job
+    from awsglue.gluetypes import *
+    from awsgluedq.transforms import EvaluateDataQuality
+    from awsglue import DynamicFrame
 
-def sparkSqlQuery(glueContext, query, mapping, transformation_ctx) -> DynamicFrame:
-    for alias, frame in mapping.items():
-        frame.toDF().createOrReplaceTempView(alias)
-    result = spark.sql(query)
-    return DynamicFrame.fromDF(result, glueContext, transformation_ctx)
-def _find_null_fields(ctx, schema, path, output, nullStringSet, nullIntegerSet, frame):
-    if isinstance(schema, StructType):
-        for field in schema:
-            new_path = path + "." if path != "" else path
-            output = _find_null_fields(ctx, field.dataType, new_path + field.name, output, nullStringSet, nullIntegerSet, frame)
-    elif isinstance(schema, ArrayType):
-        if isinstance(schema.elementType, StructType):
-            output = _find_null_fields(ctx, schema.elementType, path, output, nullStringSet, nullIntegerSet, frame)
-    elif isinstance(schema, NullType):
-        output.append(path)
-    else:
-        x, distinct_set = frame.toDF(), set()
-        for i in x.select(path).distinct().collect():
-            distinct_ = i[path.split('.')[-1]]
-            if isinstance(distinct_, list):
-                distinct_set |= set([item.strip() if isinstance(item, str) else item for item in distinct_])
-            elif isinstance(distinct_, str) :
-                distinct_set.add(distinct_.strip())
-            else:
-                distinct_set.add(distinct_)
-        if isinstance(schema, StringType):
-            if distinct_set.issubset(nullStringSet):
-                output.append(path)
-        elif isinstance(schema, IntegerType) or isinstance(schema, LongType) or isinstance(schema, DoubleType):
-            if distinct_set.issubset(nullIntegerSet):
-                output.append(path)
-    return output
+    def sparkSqlQuery(glueContext, query, mapping, transformation_ctx) -> DynamicFrame:
+        for alias, frame in mapping.items():
+            frame.toDF().createOrReplaceTempView(alias)
+        result = spark.sql(query)
+        return DynamicFrame.fromDF(result, glueContext, transformation_ctx)
+    def _find_null_fields(ctx, schema, path, output, nullStringSet, nullIntegerSet, frame):
+        if isinstance(schema, StructType):
+            for field in schema:
+                new_path = path + "." if path != "" else path
+                output = _find_null_fields(ctx, field.dataType, new_path + field.name, output, nullStringSet, nullIntegerSet, frame)
+        elif isinstance(schema, ArrayType):
+            if isinstance(schema.elementType, StructType):
+                output = _find_null_fields(ctx, schema.elementType, path, output, nullStringSet, nullIntegerSet, frame)
+        elif isinstance(schema, NullType):
+            output.append(path)
+        else:
+            x, distinct_set = frame.toDF(), set()
+            for i in x.select(path).distinct().collect():
+                distinct_ = i[path.split('.')[-1]]
+                if isinstance(distinct_, list):
+                    distinct_set |= set([item.strip() if isinstance(item, str) else item for item in distinct_])
+                elif isinstance(distinct_, str) :
+                    distinct_set.add(distinct_.strip())
+                else:
+                    distinct_set.add(distinct_)
+            if isinstance(schema, StringType):
+                if distinct_set.issubset(nullStringSet):
+                    output.append(path)
+            elif isinstance(schema, IntegerType) or isinstance(schema, LongType) or isinstance(schema, DoubleType):
+                if distinct_set.issubset(nullIntegerSet):
+                    output.append(path)
+        return output
 
-def drop_nulls(glueContext, frame, nullStringSet, nullIntegerSet, transformation_ctx) -> DynamicFrame:
-    nullColumns = _find_null_fields(frame.glue_ctx, frame.schema(), "", [], nullStringSet, nullIntegerSet, frame)
-    return DropFields.apply(frame=frame, paths=nullColumns, transformation_ctx=transformation_ctx)
+    def drop_nulls(glueContext, frame, nullStringSet, nullIntegerSet, transformation_ctx) -> DynamicFrame:
+        nullColumns = _find_null_fields(frame.glue_ctx, frame.schema(), "", [], nullStringSet, nullIntegerSet, frame)
+        return DropFields.apply(frame=frame, paths=nullColumns, transformation_ctx=transformation_ctx)
 
-args = getResolvedOptions(sys.argv, [
-    'JOB_NAME'])
+    args = getResolvedOptions(sys.argv, [
+        'JOB_NAME'])
 
-sc = SparkContext()
-glueContext = GlueContext(sc)
-spark = glueContext.spark_session
-job = Job(glueContext)
-job.init(args['JOB_NAME'], args)
+    sc = SparkContext()
+    glueContext = GlueContext(sc)
+    spark = glueContext.spark_session
+    job = Job(glueContext)
+    job.init(args['JOB_NAME'], args)
 
-# Default ruleset used by all target nodes with data quality enabled
-DEFAULT_DATA_QUALITY_RULESET = """
-    Rules = [
-        ColumnCount > 0
-    ]
-"""
+    # Default ruleset used by all target nodes with data quality enabled
+    DEFAULT_DATA_QUALITY_RULESET = """
+        Rules = [
+            ColumnCount > 0
+        ]
+    """
 
-# Script generated for node Raw data source S3
-RawdatasourceS3_node1772431168408 = glueContext.create_dynamic_frame.from_options(format_options={"quoteChar": "\"", "withHeader": True, "separator": ",", "optimizePerformance": False}, connection_type="s3", format="csv", 
-    connection_options={"paths": ["s3://aws-glue-s3-bucket-one/raw_data/sales_data/"], "recurse": True}, 
-    transformation_ctx="RawdatasourceS3_node1772431168408")
+    # Script generated for node Raw data source S3
+    RawdatasourceS3_node1772431168408 = glueContext.create_dynamic_frame.from_options(format_options={"quoteChar": "\"", "withHeader": True, "separator": ",", "optimizePerformance": False}, connection_type="s3", format="csv", 
+        connection_options={"paths": ["s3://aws-glue-s3-bucket-one/raw_data/sales_data/"], "recurse": True}, 
+        transformation_ctx="RawdatasourceS3_node1772431168408")
 
-# Script generated for node SQL Query
-SqlQuery61 = '''
-SELECT
-    product_id,
-    product_name,
-    category,
-    about_product,
-    user_id,
-    user_name,
-    review_id,
-    review_title,
-    review_content,
-    img_link,
-    product_link,
+    # Script generated for node SQL Query
+    SqlQuery61 = '''
+    SELECT
+        product_id,
+        product_name,
+        category,
+        about_product,
+        user_id,
+        user_name,
+        review_id,
+        review_title,
+        review_content,
+        img_link,
+        product_link,
 
-    -- discounted_price: ₹149 → 149.0
-    CAST(
-        REGEXP_REPLACE(discounted_price, '[^0-9.]', '')
-        AS DOUBLE
-    ) AS discounted_price,
+        -- discounted_price: ₹149 → 149.0
+        CAST(
+            REGEXP_REPLACE(discounted_price, '[^0-9.]', '')
+            AS DOUBLE
+        ) AS discounted_price,
 
-    -- actual_price: ₹1,000 → 1000.0
-    CAST(
-        REGEXP_REPLACE(actual_price, '[^0-9.]', '')
-        AS DOUBLE
-    ) AS actual_price,
+        -- actual_price: ₹1,000 → 1000.0
+        CAST(
+            REGEXP_REPLACE(actual_price, '[^0-9.]', '')
+            AS DOUBLE
+        ) AS actual_price,
 
-    -- discount_percentage: 85% → 85.0
-    CAST(
-        REGEXP_REPLACE(discount_percentage, '[^0-9.]', '')
-        AS DOUBLE
-    ) AS discount_percentage,
+        -- discount_percentage: 85% → 85.0
+        CAST(
+            REGEXP_REPLACE(discount_percentage, '[^0-9.]', '')
+            AS DOUBLE
+        ) AS discount_percentage,
 
-    -- rating: 3.9 → 3.9
-    CAST(
-        REGEXP_REPLACE(rating, '[^0-9.]', '')
-        AS DOUBLE
-    ) AS rating,
+        -- rating: 3.9 → 3.9
+        CAST(
+            REGEXP_REPLACE(rating, '[^0-9.]', '')
+            AS DOUBLE
+        ) AS rating,
 
-    -- rating_count: 24,871 → 24871
-    CAST(
-        REGEXP_REPLACE(rating_count, '[^0-9]', '')
-        AS INT
-    ) AS rating_count
+        -- rating_count: 24,871 → 24871
+        CAST(
+            REGEXP_REPLACE(rating_count, '[^0-9]', '')
+            AS INT
+        ) AS rating_count
 
-FROM myDataSource;
-'''
-SQLQuery_node1772431252856 = sparkSqlQuery(glueContext, query = SqlQuery61, mapping = {"myDataSource":RawdatasourceS3_node1772431168408}, transformation_ctx = "SQLQuery_node1772431252856")
+    FROM myDataSource;
+    '''
+    SQLQuery_node1772431252856 = sparkSqlQuery(glueContext, query = SqlQuery61, mapping = {"myDataSource":RawdatasourceS3_node1772431168408}, transformation_ctx = "SQLQuery_node1772431252856")
 
-# Script generated for node Drop Null Fields
-DropNullFields_node1772431857999 = drop_nulls(glueContext, frame=SQLQuery_node1772431252856, nullStringSet={"", "null"}, nullIntegerSet={-1}, transformation_ctx="DropNullFields_node1772431857999")
+    # Script generated for node Drop Null Fields
+    DropNullFields_node1772431857999 = drop_nulls(glueContext, frame=SQLQuery_node1772431252856, nullStringSet={"", "null"}, nullIntegerSet={-1}, transformation_ctx="DropNullFields_node1772431857999")
 
-# Script generated for node Silver layer data sink S3
-EvaluateDataQuality().process_rows(frame=DropNullFields_node1772431857999, ruleset=DEFAULT_DATA_QUALITY_RULESET, publishing_options={"dataQualityEvaluationContext": "EvaluateDataQuality_node1772428328053", "enableDataQualityResultsPublishing": True}, additional_options={"dataQualityResultsPublishing.strategy": "BEST_EFFORT", "observations.scope": "ALL"})
-SilverlayerdatasinkS3_node1772432020219 = glueContext.getSink(path="s3://data-sink-one/silver_layer/sales_data/", connection_type="s3", updateBehavior="LOG", partitionKeys=["category"], enableUpdateCatalog=True, transformation_ctx="SilverlayerdatasinkS3_node1772432020219")
-SilverlayerdatasinkS3_node1772432020219.setCatalogInfo(catalogDatabase="aws-glue-tutorial-aditya",catalogTableName="silver_table_sales_data")
-SilverlayerdatasinkS3_node1772432020219.setFormat("glueparquet", compression="snappy")
-SilverlayerdatasinkS3_node1772432020219.writeFrame(DropNullFields_node1772431857999)
-job.commit()
+    # Script generated for node Silver layer data sink S3
+    EvaluateDataQuality().process_rows(frame=DropNullFields_node1772431857999, ruleset=DEFAULT_DATA_QUALITY_RULESET, publishing_options={"dataQualityEvaluationContext": "EvaluateDataQuality_node1772428328053", "enableDataQualityResultsPublishing": True}, additional_options={"dataQualityResultsPublishing.strategy": "BEST_EFFORT", "observations.scope": "ALL"})
+    SilverlayerdatasinkS3_node1772432020219 = glueContext.getSink(path="s3://data-sink-one/silver_layer/sales_data/", connection_type="s3", updateBehavior="LOG", partitionKeys=["category"], enableUpdateCatalog=True, transformation_ctx="SilverlayerdatasinkS3_node1772432020219")
+    SilverlayerdatasinkS3_node1772432020219.setCatalogInfo(catalogDatabase="aws-glue-tutorial-aditya",catalogTableName="silver_table_sales_data")
+    SilverlayerdatasinkS3_node1772432020219.setFormat("glueparquet", compression="snappy")
+    SilverlayerdatasinkS3_node1772432020219.writeFrame(DropNullFields_node1772431857999)
+    job.commit()
 ```
 
 ### NOTE:
@@ -1283,33 +1282,33 @@ job.commit()
 - ![add_lambda_function_env_vars](images/aws_glue/Lambda_function/add_lambda_function_env_vars.png)
 - here is the lambda function code 
 ```python
-import json
-import boto3
-import os
+    import json
+    import boto3
+    import os
 
-glue_client = boto3.client("glue")
+    glue_client = boto3.client("glue")
 
-GLUE_JOB_NAME = os.environ["GLUE_JOB_NAME"]
+    GLUE_JOB_NAME = os.environ["GLUE_JOB_NAME"]
 
-def lambda_handler(event, context):
-    try:
-        response = glue_client.start_job_run(
-            JobName=GLUE_JOB_NAME
-        )
+    def lambda_handler(event, context):
+        try:
+            response = glue_client.start_job_run(
+                JobName=GLUE_JOB_NAME
+            )
 
-        return {
-            "statusCode": 200,
-            "body": json.dumps({
-                "message": "Glue job started successfully",
-                "jobRunId": response["JobRunId"]
-            })
-        }
+            return {
+                "statusCode": 200,
+                "body": json.dumps({
+                    "message": "Glue job started successfully",
+                    "jobRunId": response["JobRunId"]
+                })
+            }
 
-    except Exception as e:
-        return {
-            "statusCode": 500,
-            "body": str(e)
-        }
+        except Exception as e:
+            return {
+                "statusCode": 500,
+                "body": str(e)
+            }
 ```
 
 
@@ -1360,18 +1359,18 @@ In order to make incremental load pipeline production ready there few things I n
 - What production Data platform do instead 
     - You can either use EventBridge
     - ```bash
-    S3 → EventBridge → SQS → Lambda → Glue
-    ```
+        S3 → EventBridge → SQS → Lambda → Glue
+        ```
     - Or your can use SQS directly removing EventBridge
-    ```bash
-    S3
-     ↓
-    SQS (queue)
-     ↓
-    Lambda (polls queue)
-     ↓
-    Glue
-    ```
+    - ```bash
+        S3
+        ↓
+        SQS (queue)
+        ↓
+        Lambda (polls queue)
+        ↓
+        Glue
+        ```
     - I went with the EventBridge method 
     - Pros of using this architecture
         - Each layer is independent.

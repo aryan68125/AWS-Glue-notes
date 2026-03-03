@@ -1921,21 +1921,21 @@ In order to make incremental load pipeline production ready there few things I n
 - Select the S3 simple storage service for trigger event 
 - Once thats done now use this event pattern filter 
     - ```json
-        {
-        "source": ["aws.s3"],
-        "detail-type": ["Object Created"],
-        "detail": {
-            "bucket": {
-            "name": ["aws-glue-s3-bucket-one"]
-            },
-            "object": {
-            "key": [{
-                "prefix": "raw_data/sales_data/"
-            }]
+            {
+            "source": ["aws.s3"],
+            "detail-type": ["Object Created"],
+            "detail": {
+                "bucket": {
+                "name": ["aws-glue-s3-bucket-one"]
+                },
+                "object": {
+                "key": [{
+                    "prefix": "raw_data/sales_data/"
+                }]
+                }
             }
-        }
-        }
-    ```
+            }
+        ```
     - Here ```"raw_data/sales_data/"``` is the directory inside this S3 where your files are arriving.
 - ![create_event_bridge_2](images/production_grade_glue_implementation/event_bridge_setup/create_event_bridge_2.png)
 

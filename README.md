@@ -1819,25 +1819,25 @@ In order to make incremental load pipeline production ready there few things I n
         - It Becomes Truly Event-Driven
         - Instead of 
             - ```bash
-                File arrives → Run Glue
-            ```
+                    File arrives → Run Glue
+                ```
         - This version of code does this
             - ```bash
-                File arrives → Extract exact object key → Pass to Glue
-            ```
+                    File arrives → Extract exact object key → Pass to Glue
+                ```
         - Glue will now be able to process 
             - ```bash
-                s3://bucket/specific_file.csv
-            ```
+                    s3://bucket/specific_file.csv
+                ```
         - This eleminates:
             - Full folder scans 
             - Reprocessing old files
             - Hidden duplicates
         - Perfect Failure Isolation
             - ```bash
-                file_1.csv → corrupt
-                file_2.csv → good
-            ```
+                    file_1.csv → corrupt
+                    file_2.csv → good
+                ```
             - With Version 1:
                 - Entire folder ingestion may fail.
             - With version 2:
@@ -1846,9 +1846,9 @@ In order to make incremental load pipeline production ready there few things I n
         - Enables DLQ + Replay
             - Since I am extracting 
                 - ```bash
-                    bucket
-                    key
-                ```
+                        bucket
+                        key
+                    ```
             - That information is preserved in Amazon SQS (DLQ)
                 - If Glue fails:
                     - The exact file path remains inside the message.

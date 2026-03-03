@@ -931,6 +931,50 @@ Here are some of the custom policies I experimented with and it worked like a ch
 - Things that I want to implement here:
     - Implement automatic visual ETL pipeline trigger when a new file arrives in S3 bucket automatically using Lambda function.
     - Then after ingestion again use Lambda funtion to register the data in AWS glue catalog so that we can use Athena to use SQL to query the data in parquet files prsent in the S3 bucket.
+### Architectural diagram
+```bash
+                ┌─────────────────────────┐
+                │     Upstream System     │
+                └────────────┬────────────┘
+                             │
+                             ▼
+                ┌─────────────────────────┐
+                │   S3 Source Bucket      │
+                │   (CSV Files)           │
+                └────────────┬────────────┘
+                             │  (PUT Event)
+                             ▼
+                ┌─────────────────────────┐
+                │      Lambda Function    │
+                │  (Start Glue Job)       │
+                └────────────┬────────────┘
+                             │
+                             ▼
+                ┌─────────────────────────┐
+                │     Glue Visual ETL     │
+                │  - Bookmark Enabled     │
+                │  - Clean + Transform    │
+                │  - Convert Types        │
+                │  - Write Parquet        │
+                └────────────┬────────────┘
+                             │
+                             ▼
+                ┌─────────────────────────┐
+                │   S3 Data Sink Bucket   │
+                │     (Parquet Files)     │
+                └────────────┬────────────┘
+                             │
+                             ▼
+                ┌─────────────────────────┐
+                │   Glue Data Catalog     │
+                └────────────┬────────────┘
+                             │
+                             ▼
+                ┌─────────────────────────┐
+                │        Athena           │
+                │      (SQL Queries)      │
+                └─────────────────────────┘
+```
 ### Preparing IAM roles for the services
 **STEP 1:** Create an IAM role for Lambda function that starts AWS glue visual ETL pipeline to make sure that it has proper permissions to trigger AWS visual ETL pipeline when put event is triggered in source AWS S3 bucket.
 - Create a custom policy for this IAM role. You are free to use the code below to attach it to the Role that you will be creating for this Lambda function.
@@ -1112,6 +1156,189 @@ FROM myDataSource;
 - ![FileArrivalEvent](images/aws_glue/automate_visual_ETL/FileArrivalEvent.png)
 - In the same page if you scroll down you will find the options to attach a lambda function that you created earlier to this event 
 - ![set_lambda_function_here](images/aws_glue/automate_visual_ETL/set_lambda_function_here.png)
+
+### Implementing Incremental Load (make this implementation production ready)
+In order to make incremental load pipeline production ready there few things I need to implement
+- **Right now I have attached the lambda function that starts visual ETL pipeline is directly attached to the event notification of the source S3 bucket**
+    - This is not a reliable way to trigger Lambda functions 
+    - S3 events notifications are:
+        - At least once delivery
+        - Can produce duplicate events
+        - Can occasionally miss events (rare, but possible)
+        - No ordering guarantees
+    - So if 
+        - 10 files at once or the same file is retired 
+    - You might
+        - Trigger glue twice for the same file
+        - Process duplicate data
+        - Overwrite partitions incorrectly
+    - For small hobby pipelines --> Fine 
+    - For production ingestion --> Risky
+    - If 500 files arrive in 1 minute then S3 will invoke lambda function 500 times and Lambda function will try to start 500 glue jobs , Now you hit:
+        - Glue concurrency limit
+        - API throttling
+        - Random failures
+        - Partial ingestion
+    - No replay capability:
+        - You cannot easily replay missed events 
+        - S3 does not perists event history for you 
+    - Tight coupling
+        - Right now bucket is tightly coupled to 
+            - One Lambda function
+            - One Glue job
+        - If tomorrow 
+            - I want to send the same event to another system
+            - Or introduce validation
+            - Or introduce duplication
+            - I must rewrite everything and that's a brittle architecture
+- What production Data platform do instead 
+    - You can either use EventBridge
+    - ```bash
+    S3 → EventBridge → SQS → Lambda → Glue
+    ```
+    - Or your can use SQS directly removing EventBridge
+    ```bash
+    S3
+     ↓
+    SQS (queue)
+     ↓
+    Lambda (polls queue)
+     ↓
+    Glue
+    ```
+    - I went with the EventBridge method 
+    - Pros of using this architecture
+        - Each layer is independent.
+        - If tomorrow you want 
+            - Another Lambda 
+            - A step function
+            - A montioring pipeline 
+            - A metadata tracker 
+        - You just add another EventBridge rule.
+        - You don't need to touch S3 
+    - Using SQS as the buffer
+        - Amazon SQS gives you:
+            - Persistent message storage.
+            - Visibility timeout
+            - Controlled retries 
+            - Dead-Letter queue
+        - If lambda fails:
+            - Message becomes visible again
+            - Gets retried 
+            - After N retries --> Moves to DLQ
+    - Replay capability
+        - If something breaks 
+            - Bad glue transformation
+            - Schema issue 
+            - Partition error
+        - You can:
+            - Reprocess DLQ messages 
+            - Re-drive message from SQS
+            - Manually replay failed ingestion
+        - This is critical in production data systems . Without a queue replay is painful.
+    - Backpressure & Concurrency Control
+        - If 500 files arrive:
+            - With SQS
+                - Message wait safely
+                - Lambda scales gradually
+                - You can control:
+                    - Batch size 
+                    - max concurrency
+                    - parallelism
+                - You just introduced flow control into your ingestion
+    - Event Filtering at the Platform Layer
+        - Because I used:
+            - I can filter events before they even hit SQS:
+                - Only .csv files
+                - Only raw/sales/ prefix
+                - Ignore temp files
+                - Ignore test uploads
+            - That reduces noise and cost.
+    - Clean Failure Isolation
+        - If:
+            - Glue API throttles 
+            - Lambda fails 
+            - Network hiccup happens
+        - The event is safe inside SQS
+    - Horizontal scalability
+        - Add muliple Lambda consumers
+        - Scale out ingestion
+        - Process different datasets in parallel
+    - This architecture scales horizontally
+    - Observability & Monitoring
+        - Now you can monitor 
+            - SQS queue depth 
+            - DLQ message count 
+            - Lambda error rate
+            - Glue job failures
+        - If queue depth spikes:
+            - Ingestion bottleneck
+        - If DLQ grows 
+            - Transformation bug
+
+### Implementation steps 
+#### Create a DLQ
+- A Dead Letter Queue is a special queue where messages are sent after they fail processing multiple times. It’s a safety net for failed events.
+- Storing events in case of failure is necessary so that we can replay the ingestion pipeline after fixing the errors. Hence making sure that data is not lost silently
+
+**STEP 1:** 
+- Give your SQS a name and enable encryption
+![create_DLQ_1](images/production_grade_glue_implementation/sqs_dlq_implementation/create_DLQ_1.png)
+![create_DLQ_2](images/production_grade_glue_implementation/sqs_dlq_implementation/create_DLQ_2.png)
+![create_DLQ_3](images/production_grade_glue_implementation/sqs_dlq_implementation/create_DLQ_3.png)
+- This is the access policy I used:
+```json
+{
+  "Version": "2012-10-17",
+  "Id": "__default_policy_ID",
+  "Statement": [
+    {
+      "Sid": "__owner_statement",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::aws_account_id:root"
+      },
+      "Action": "SQS:*",
+      "Resource": "arn:aws:sqs:ap-south-1:aws_account_id:sales-ingestion-dlq"
+    },
+    {
+      "Sid": "AllowEventBridgeToSendMessage",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "events.amazonaws.com"
+      },
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:ap-south-1:aws_account_id:sales-ingestion-dlq",
+      "Condition": {
+        "ArnEquals": {
+          "aws:SourceArn": "arn:aws:events:ap-south-1:aws_account_id:rule/ActivateLambdaFuncEventBridgeRules"
+        }
+      }
+    },
+    {
+      "Sid": "AWSEvents_ActivateLambdaFuncEventBridgeRules_dlq_41c9320f-edd2-4fde-ad71-2985e68b1d7c",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "events.amazonaws.com"
+      },
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:ap-south-1:aws_account_id:sales-ingestion-dlq",
+      "Condition": {
+        "ArnEquals": {
+          "aws:SourceArn": "arn:aws:events:ap-south-1:aws_account_id:rule/ActivateLambdaFuncEventBridgeRules"
+        }
+      }
+    }
+  ]
+}
+```
+- Now in the event of failure the event messages won't be lost instead it will saved here in this SQS named ```sales-ingestion-dlq``` 
+![failure_DLQ_message_polling](images/production_grade_glue_implementation/sqs_dlq_implementation/failure_DLQ_message_polling.png)
+#### Configuring S3 bucket for EventBridge
+- Here If you have any pre-configured Event notification in your S3 bucket then delete it We don't need it anymore. 
+- Instead turn on the Amazon event bridge option, this is present just below the event notification option in the properties tab of the S3 bucket.
+![set_s3_bucket_event_bridge](images/production_grade_glue_implementation/S3_bucket_configurations/set_s3_bucket_event_bridge.png)
+
 
 ## Creating an end-to-end ETL pipeline from source to dashboard (TODO)
 ```bash

@@ -1950,7 +1950,8 @@ def lambda_handler(event, context):
     - This will set the number of hours an unprocessed event can be kept
 - Here attach your SQS which will serve as DLQ to store messages in case of a failure after the fix is completed the stored messages will be re-processed.
     - This prevent data loss in case of a failure.
-[create_event_bridge_6](images/production_grade_glue_implementation/event_bridge_setup/create_event_bridge_6.png)
+
+![create_event_bridge_6](images/production_grade_glue_implementation/event_bridge_setup/create_event_bridge_6.png)
 
 
 ## Creating an end-to-end ETL pipeline from source to dashboard (TODO)

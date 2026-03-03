@@ -1718,17 +1718,18 @@ In order to make incremental load pipeline production ready there few things I n
 - Create a custom policy named ```AWSGlueStartJobAccessPolicy```
     - Use this policy json 
     - ```json
-        {
-            "Version": "2012-10-17",
-            "Statement": [
-                {
-                    "Effect": "Allow",
-                    "Action": "glue:StartJobRun",
-                    "Resource": "arn:aws:glue:ap-south-1:406868976171:job/ingest_sales_data"
-                }
-            ]
-        }
-    ```
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": "glue:StartJobRun",
+                        "Resource": "arn:aws:glue:ap-south-1:406868976171:job/ingest_sales_data"
+                    }
+                ]
+            }
+        ```
+        
 - Create a role named ```TriggerAWSGlueVisualETLPipeline```
     - Attach this aws managed policy to it ```AWSLambdaBasicExecutionRole```
     - Attach this ```AWSGlueStartJobAccessPolicy``` custom policy that you made earlier to it 

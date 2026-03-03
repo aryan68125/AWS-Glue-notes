@@ -1867,12 +1867,12 @@ In order to make incremental load pipeline production ready there few things I n
         - Debuggability:
             - Version 2 prints:
                 - ```python
-                    print(f"Received new object: s3://{bucket}/{key}")
-                ```
+                        print(f"Received new object: s3://{bucket}/{key}")
+                    ```
                 - Now your cloud watch logs show:
-                - ```python
-                    Received new object: s3://raw/sales/file123.csv
-                ```
+                - ```bash
+                        Received new object: s3://raw/sales/file123.csv
+                    ```
             - This allows us to immediately know
                 - Which file triggered
                 - Which file failed

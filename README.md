@@ -1713,17 +1713,17 @@ job.commit()
 - Create a role that gives appropirate access rights of the services to make sure that the lambda function works as intended.
 - Create a custom policy named ```AWSGlueStartJobAccessPolicy```
     - Use this policy json 
-    ```json
-    {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Effect": "Allow",
-                "Action": "glue:StartJobRun",
-                "Resource": "arn:aws:glue:ap-south-1:406868976171:job/ingest_sales_data"
-            }
-        ]
-    }
+    - ```json
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": "glue:StartJobRun",
+                    "Resource": "arn:aws:glue:ap-south-1:406868976171:job/ingest_sales_data"
+                }
+            ]
+        }
     ```
 - Create a role named ```TriggerAWSGlueVisualETLPipeline```
     - Attach this aws managed policy to it ```AWSLambdaBasicExecutionRole```
@@ -1731,50 +1731,50 @@ job.commit()
 
 **STEP 2:**
 - Write the code 
-```python
-# VERSION 2 : Works with Event Bridge and is Production READY
-import json
-import boto3
-import os
+- ```python
+    # VERSION 2 : Works with Event Bridge and is Production READY
+    import json
+    import boto3
+    import os
 
-glue_client = boto3.client("glue")
+    glue_client = boto3.client("glue")
 
-GLUE_JOB_NAME = os.environ["GLUE_JOB_NAME"]
+    GLUE_JOB_NAME = os.environ["GLUE_JOB_NAME"]
 
-def lambda_handler(event, context):
-    try:
-        # event recieved from event bridge
-        print(f"Lambda function | Event recieved from event bridge | {event}") 
-        # Extract bucket and key from EventBridge event
-        bucket = event["detail"]["bucket"]["name"]
-        key = event["detail"]["object"]["key"]
+    def lambda_handler(event, context):
+        try:
+            # event recieved from event bridge
+            print(f"Lambda function | Event recieved from event bridge | {event}") 
+            # Extract bucket and key from EventBridge event
+            bucket = event["detail"]["bucket"]["name"]
+            key = event["detail"]["object"]["key"]
 
-        print(f"Lambda function | Received new object: | s3://{bucket}/{key}")
+            print(f"Lambda function | Received new object: | s3://{bucket}/{key}")
 
-        response = glue_client.start_job_run(
-            JobName=GLUE_JOB_NAME,
-            Arguments={
-                "--source_bucket": bucket,
-                "--source_key": key
+            response = glue_client.start_job_run(
+                JobName=GLUE_JOB_NAME,
+                Arguments={
+                    "--source_bucket": bucket,
+                    "--source_key": key
+                }
+            )
+
+            print(f"Lambda function | Started Glue job | {response['JobRunId']}")
+
+            return {
+                "statusCode": 200,
+                "body": json.dumps({
+                    "message": "Glue job started successfully",
+                    "jobRunId": response["JobRunId"]
+                })
             }
-        )
 
-        print(f"Lambda function | Started Glue job | {response['JobRunId']}")
-
-        return {
-            "statusCode": 200,
-            "body": json.dumps({
-                "message": "Glue job started successfully",
-                "jobRunId": response["JobRunId"]
-            })
-        }
-
-    except Exception as e:
-        print(f"Error: {str(e)}")
-        raise e    except Exception as e:
-        print(f"Error: {str(e)}")
-        raise e
-```
+        except Exception as e:
+            print(f"Error: {str(e)}")
+            raise e    except Exception as e:
+            print(f"Error: {str(e)}")
+            raise e
+    ```
 
 - Why this is a better code than the previous version?
     - Previous code 

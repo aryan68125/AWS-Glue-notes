@@ -1554,19 +1554,19 @@ In order to make incremental load pipeline production ready there few things I n
 - It then transforms the data in a column into its appropriate datatype. The reason I had to do this is because in csv file all the columns wheather it has data in numbers are of string datatype.
 - It then register the metadata in the AWS glue catalog after the actual data is stored in parquet files in the target S3. It is to make sure that the data can be queried from those output parquet files using Athena.
 - ```python
-args = getResolvedOptions(sys.argv, [
-    'JOB_NAME',
-    'source_bucket',
-    'source_key'
-])
+    args = getResolvedOptions(sys.argv, [
+        'JOB_NAME',
+        'source_bucket',
+        'source_key'
+    ])
 
-source_bucket = args['source_bucket']
-source_key = args['source_key']
-```
+    source_bucket = args['source_bucket']
+    source_key = args['source_key']
+    ```
     - This code accepts the arguments related to bucket and the recently PUT object key that is passed on to AWS glue ETL pipeline by Lambda function that has invoked it when the PUT event happened
 - ```python
-connection_options={"paths": [f"s3://{source_bucket}/{source_key}"],"recurse": False},
-```
+    connection_options={"paths": [f"s3://{source_bucket}/{source_key}"],"recurse": False},
+    ```
     - This line is very important when it comes to optimization 
     - In the earlier version my ETL pipeline was scanning the whole folder everytime it was invoked by lambda function but now it only scans the file that has arrived in the S3 hence saving precious compute. As a result we are able to save cost.
     - If three files are uploaded to S3 then for each file three events will be generated then those three events will actiavte three lambda functions which will be invoking three separate glue visual ETL pipelines. These pipelines will then execute one by one 
@@ -1708,7 +1708,7 @@ connection_options={"paths": [f"s3://{source_bucket}/{source_key}"],"recurse": F
     SilverlayerdatasinkS3_node1772432020219.setFormat("glueparquet", compression="snappy")
     SilverlayerdatasinkS3_node1772432020219.writeFrame(DropNullFields_node1772431857999)
     job.commit()
-```
+    ```
 
 #### Create a Lambda function 
 - This Lambda function will trigger the Visual ETL pipeline
@@ -1717,7 +1717,7 @@ connection_options={"paths": [f"s3://{source_bucket}/{source_key}"],"recurse": F
 - Create a role that gives appropirate access rights of the services to make sure that the lambda function works as intended.
 - Create a custom policy named ```AWSGlueStartJobAccessPolicy```
     - Use this policy json 
-    -```json
+    - ```json
         {
             "Version": "2012-10-17",
             "Statement": [
@@ -1783,9 +1783,9 @@ connection_options={"paths": [f"s3://{source_bucket}/{source_key}"],"recurse": F
 - Why this is a better code than the previous version?
     - Previous code 
         - ```python
-        response = glue_client.start_job_run(
-            JobName=GLUE_JOB_NAME
-        )
+            response = glue_client.start_job_run(
+                JobName=GLUE_JOB_NAME
+            )
         ```
         - It was only taking GLUE_JOB_NAME as an input argument 
         - Hence the lambda function have no idea which file triggered it.
@@ -1798,19 +1798,20 @@ connection_options={"paths": [f"s3://{source_bucket}/{source_key}"],"recurse": F
         - That was not event based ingestion that was reactive batch processing.
     - New version
         - ```python
-        bucket = event["detail"]["bucket"]["name"]
-        key = event["detail"]["object"]["key"]
+                bucket = event["detail"]["bucket"]["name"]
+                key = event["detail"]["object"]["key"]
 
-        print(f"Received new object: s3://{bucket}/{key}")
+                print(f"Received new object: s3://{bucket}/{key}")
 
-        response = glue_client.start_job_run(
-            JobName=GLUE_JOB_NAME,
-            Arguments={
-                "--source_bucket": bucket,
-                "--source_key": key
-            }
-        )
-        ```
+                response = glue_client.start_job_run(
+                    JobName=GLUE_JOB_NAME,
+                    Arguments={
+                        "--source_bucket": bucket,
+                        "--source_key": key
+                    }
+                )
+            ```
+
         - The event argument is the one recieving the event related data from the event bridge 
             - This data contains the source_bucket and object_key.
             - The lambda function then passes this data to AWS glue visual ETL pipeline so that it can use this information to only scan for the file that has arrived in the S3 bucket instead of scanning the whole folder, hence saving DBU compute and ultimately saving cost.  
@@ -1818,15 +1819,15 @@ connection_options={"paths": [f"s3://{source_bucket}/{source_key}"],"recurse": F
         - It Becomes Truly Event-Driven
         - Instead of 
             - ```bash
-            File arrives → Run Glue
+                File arrives → Run Glue
             ```
         - This version of code does this
             - ```bash
-            File arrives → Extract exact object key → Pass to Glue
+                File arrives → Extract exact object key → Pass to Glue
             ```
         - Glue will now be able to process 
             - ```bash
-            s3://bucket/specific_file.csv
+                s3://bucket/specific_file.csv
             ```
         - This eleminates:
             - Full folder scans 
@@ -1834,8 +1835,8 @@ connection_options={"paths": [f"s3://{source_bucket}/{source_key}"],"recurse": F
             - Hidden duplicates
         - Perfect Failure Isolation
             - ```bash
-            file_1.csv → corrupt
-            file_2.csv → good
+                file_1.csv → corrupt
+                file_2.csv → good
             ```
             - With Version 1:
                 - Entire folder ingestion may fail.
@@ -1845,8 +1846,8 @@ connection_options={"paths": [f"s3://{source_bucket}/{source_key}"],"recurse": F
         - Enables DLQ + Replay
             - Since I am extracting 
                 - ```bash
-                bucket
-                key
+                    bucket
+                    key
                 ```
             - That information is preserved in Amazon SQS (DLQ)
                 - If Glue fails:
@@ -1866,11 +1867,11 @@ connection_options={"paths": [f"s3://{source_bucket}/{source_key}"],"recurse": F
         - Debuggability:
             - Version 2 prints:
                 - ```python
-                print(f"Received new object: s3://{bucket}/{key}")
+                    print(f"Received new object: s3://{bucket}/{key}")
                 ```
                 - Now your cloud watch logs show:
-                ```python
-                Received new object: s3://raw/sales/file123.csv
+                - ```python
+                    Received new object: s3://raw/sales/file123.csv
                 ```
             - This allows us to immediately know
                 - Which file triggered

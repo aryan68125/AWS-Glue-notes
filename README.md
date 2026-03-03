@@ -1532,6 +1532,7 @@ In order to make incremental load pipeline production ready there few things I n
             ]
         }
     ```
+    
 - Create a Role named ```AWSGlueRole```
 - Attach policies to this role 
     - attach ```LimitedS3PermissionPolicy``` custom policy
@@ -1729,7 +1730,7 @@ In order to make incremental load pipeline production ready there few things I n
                 ]
             }
         ```
-        
+
 - Create a role named ```TriggerAWSGlueVisualETLPipeline```
     - Attach this aws managed policy to it ```AWSLambdaBasicExecutionRole```
     - Attach this ```AWSGlueStartJobAccessPolicy``` custom policy that you made earlier to it 

@@ -1103,6 +1103,138 @@ FROM myDataSource;
     - Then you will have to set the table name 
     - Add partition key if you think its needed
     - ![target_s3_set_database_table_name_and_partition](images/aws_glue/visualETL/target_s3_set_database_table_name_and_partition.png)
+- This is the generated script from the visual ETL pipeline 
+
+```python
+import sys
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.job import Job
+from awsglue.gluetypes import *
+from awsgluedq.transforms import EvaluateDataQuality
+from awsglue import DynamicFrame
+
+def sparkSqlQuery(glueContext, query, mapping, transformation_ctx) -> DynamicFrame:
+    for alias, frame in mapping.items():
+        frame.toDF().createOrReplaceTempView(alias)
+    result = spark.sql(query)
+    return DynamicFrame.fromDF(result, glueContext, transformation_ctx)
+def _find_null_fields(ctx, schema, path, output, nullStringSet, nullIntegerSet, frame):
+    if isinstance(schema, StructType):
+        for field in schema:
+            new_path = path + "." if path != "" else path
+            output = _find_null_fields(ctx, field.dataType, new_path + field.name, output, nullStringSet, nullIntegerSet, frame)
+    elif isinstance(schema, ArrayType):
+        if isinstance(schema.elementType, StructType):
+            output = _find_null_fields(ctx, schema.elementType, path, output, nullStringSet, nullIntegerSet, frame)
+    elif isinstance(schema, NullType):
+        output.append(path)
+    else:
+        x, distinct_set = frame.toDF(), set()
+        for i in x.select(path).distinct().collect():
+            distinct_ = i[path.split('.')[-1]]
+            if isinstance(distinct_, list):
+                distinct_set |= set([item.strip() if isinstance(item, str) else item for item in distinct_])
+            elif isinstance(distinct_, str) :
+                distinct_set.add(distinct_.strip())
+            else:
+                distinct_set.add(distinct_)
+        if isinstance(schema, StringType):
+            if distinct_set.issubset(nullStringSet):
+                output.append(path)
+        elif isinstance(schema, IntegerType) or isinstance(schema, LongType) or isinstance(schema, DoubleType):
+            if distinct_set.issubset(nullIntegerSet):
+                output.append(path)
+    return output
+
+def drop_nulls(glueContext, frame, nullStringSet, nullIntegerSet, transformation_ctx) -> DynamicFrame:
+    nullColumns = _find_null_fields(frame.glue_ctx, frame.schema(), "", [], nullStringSet, nullIntegerSet, frame)
+    return DropFields.apply(frame=frame, paths=nullColumns, transformation_ctx=transformation_ctx)
+
+args = getResolvedOptions(sys.argv, [
+    'JOB_NAME'])
+
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+job = Job(glueContext)
+job.init(args['JOB_NAME'], args)
+
+# Default ruleset used by all target nodes with data quality enabled
+DEFAULT_DATA_QUALITY_RULESET = """
+    Rules = [
+        ColumnCount > 0
+    ]
+"""
+
+# Script generated for node Raw data source S3
+RawdatasourceS3_node1772431168408 = glueContext.create_dynamic_frame.from_options(format_options={"quoteChar": "\"", "withHeader": True, "separator": ",", "optimizePerformance": False}, connection_type="s3", format="csv", 
+    connection_options={"paths": ["s3://aws-glue-s3-bucket-one/raw_data/sales_data/"], "recurse": True}, 
+    transformation_ctx="RawdatasourceS3_node1772431168408")
+
+# Script generated for node SQL Query
+SqlQuery61 = '''
+SELECT
+    product_id,
+    product_name,
+    category,
+    about_product,
+    user_id,
+    user_name,
+    review_id,
+    review_title,
+    review_content,
+    img_link,
+    product_link,
+
+    -- discounted_price: ₹149 → 149.0
+    CAST(
+        REGEXP_REPLACE(discounted_price, '[^0-9.]', '')
+        AS DOUBLE
+    ) AS discounted_price,
+
+    -- actual_price: ₹1,000 → 1000.0
+    CAST(
+        REGEXP_REPLACE(actual_price, '[^0-9.]', '')
+        AS DOUBLE
+    ) AS actual_price,
+
+    -- discount_percentage: 85% → 85.0
+    CAST(
+        REGEXP_REPLACE(discount_percentage, '[^0-9.]', '')
+        AS DOUBLE
+    ) AS discount_percentage,
+
+    -- rating: 3.9 → 3.9
+    CAST(
+        REGEXP_REPLACE(rating, '[^0-9.]', '')
+        AS DOUBLE
+    ) AS rating,
+
+    -- rating_count: 24,871 → 24871
+    CAST(
+        REGEXP_REPLACE(rating_count, '[^0-9]', '')
+        AS INT
+    ) AS rating_count
+
+FROM myDataSource;
+'''
+SQLQuery_node1772431252856 = sparkSqlQuery(glueContext, query = SqlQuery61, mapping = {"myDataSource":RawdatasourceS3_node1772431168408}, transformation_ctx = "SQLQuery_node1772431252856")
+
+# Script generated for node Drop Null Fields
+DropNullFields_node1772431857999 = drop_nulls(glueContext, frame=SQLQuery_node1772431252856, nullStringSet={"", "null"}, nullIntegerSet={-1}, transformation_ctx="DropNullFields_node1772431857999")
+
+# Script generated for node Silver layer data sink S3
+EvaluateDataQuality().process_rows(frame=DropNullFields_node1772431857999, ruleset=DEFAULT_DATA_QUALITY_RULESET, publishing_options={"dataQualityEvaluationContext": "EvaluateDataQuality_node1772428328053", "enableDataQualityResultsPublishing": True}, additional_options={"dataQualityResultsPublishing.strategy": "BEST_EFFORT", "observations.scope": "ALL"})
+SilverlayerdatasinkS3_node1772432020219 = glueContext.getSink(path="s3://data-sink-one/silver_layer/sales_data/", connection_type="s3", updateBehavior="LOG", partitionKeys=["category"], enableUpdateCatalog=True, transformation_ctx="SilverlayerdatasinkS3_node1772432020219")
+SilverlayerdatasinkS3_node1772432020219.setCatalogInfo(catalogDatabase="aws-glue-tutorial-aditya",catalogTableName="silver_table_sales_data")
+SilverlayerdatasinkS3_node1772432020219.setFormat("glueparquet", compression="snappy")
+SilverlayerdatasinkS3_node1772432020219.writeFrame(DropNullFields_node1772431857999)
+job.commit()
+```
+
 ### NOTE:
 - During testing you may want to ingest the same file again and again but since you have set the bookmark checkbox to be true in your AWS glue visual ETL pipeline it will not read the same file twice 
 - In order to solve this problem you have the capability to reset bookmark for your visual ETL pipeline 
@@ -1145,6 +1277,36 @@ FROM myDataSource;
 - ![write_code_to_trigger_aws_glue_ETL](images/aws_glue/Lambda_function/write_code_to_trigger_aws_glue_ETL.png)
 - Set Lambda Environment Variable
 - ![add_lambda_function_env_vars](images/aws_glue/Lambda_function/add_lambda_function_env_vars.png)
+- here is the lambda function code 
+```python
+import json
+import boto3
+import os
+
+glue_client = boto3.client("glue")
+
+GLUE_JOB_NAME = os.environ["GLUE_JOB_NAME"]
+
+def lambda_handler(event, context):
+    try:
+        response = glue_client.start_job_run(
+            JobName=GLUE_JOB_NAME
+        )
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": "Glue job started successfully",
+                "jobRunId": response["JobRunId"]
+            })
+        }
+
+    except Exception as e:
+        return {
+            "statusCode": 500,
+            "body": str(e)
+        }
+```
 
 
 **STEP 3:** 
@@ -1338,12 +1500,197 @@ In order to make incremental load pipeline production ready there few things I n
 - Here If you have any pre-configured Event notification in your S3 bucket then delete it We don't need it anymore. 
 - Instead turn on the Amazon event bridge option, this is present just below the event notification option in the properties tab of the S3 bucket.
 ![set_s3_bucket_event_bridge](images/production_grade_glue_implementation/S3_bucket_configurations/set_s3_bucket_event_bridge.png)
+
 #### Create a Lambda function 
 - This Lambda function will trigger the Visual ETL pipeline
 
 **STEP 1:**
 - Create a role that gives appropirate access rights of the services to make sure that the lambda function works as intended.
-- Create a role named 
+- Create a custom policy named ```AWSGlueStartJobAccessPolicy```
+    - Use this policy json 
+    ```json
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Action": "glue:StartJobRun",
+                "Resource": "arn:aws:glue:ap-south-1:406868976171:job/ingest_sales_data"
+            }
+        ]
+    }
+    ```
+- Create a role named ```TriggerAWSGlueVisualETLPipeline```
+    - Attach this aws managed policy to it ```AWSLambdaBasicExecutionRole```
+    - Attach this ```AWSGlueStartJobAccessPolicy``` custom policy that you made earlier to it 
+
+**STEP 2:**
+- Write the code 
+```python
+import json
+import boto3
+import os
+
+glue_client = boto3.client("glue")
+
+GLUE_JOB_NAME = os.environ["GLUE_JOB_NAME"]
+
+def lambda_handler(event, context):
+    try:
+        # Extract bucket and key from EventBridge event
+        bucket = event["detail"]["bucket"]["name"]
+        key = event["detail"]["object"]["key"]
+
+        print(f"Received new object: s3://{bucket}/{key}")
+
+        response = glue_client.start_job_run(
+            JobName=GLUE_JOB_NAME,
+            Arguments={
+                "--source_bucket": bucket,
+                "--source_key": key
+            }
+        )
+
+        print(f"Started Glue job: {response['JobRunId']}")
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": "Glue job started successfully",
+                "jobRunId": response["JobRunId"]
+            })
+        }
+
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        raise e
+```
+- Why this is a better code than the previous version?
+    - Previous code 
+        - ```python
+        response = glue_client.start_job_run(
+            JobName=GLUE_JOB_NAME
+        )
+        ```
+        - It was only taking GLUE_JOB_NAME as an input argument 
+        - Hence the lambda function have no idea which file triggered it.
+        - In the previous version Glue used to scan for folders (Glue was setup to be a folder-based job)
+        - Cannot isolate failures
+        - Not idempotent
+        - Hard to debug
+        - Wastes compute
+        - What the previous code was doing "Something happened in S3 run glue visual ETL blindly"
+        - That was not event based ingestion that was reactive batch processing.
+    - New version
+        - ```python
+        bucket = event["detail"]["bucket"]["name"]
+        key = event["detail"]["object"]["key"]
+
+        print(f"Received new object: s3://{bucket}/{key}")
+
+        response = glue_client.start_job_run(
+            JobName=GLUE_JOB_NAME,
+            Arguments={
+                "--source_bucket": bucket,
+                "--source_key": key
+            }
+        )
+        ```
+        - This code allows me to implement File level ingestion logic when developing glue visual ETL pipeline.
+        - It Becomes Truly Event-Driven
+        - Instead of 
+            - ```bash
+            File arrives → Run Glue
+            ```
+        - This version of code does this
+            - ```bash
+            File arrives → Extract exact object key → Pass to Glue
+            ```
+        - Glue will now be able to process 
+            - ```bash
+            s3://bucket/specific_file.csv
+            ```
+        - This eleminates:
+            - Full folder scans 
+            - Reprocessing old files
+            - Hidden duplicates
+        - Perfect Failure Isolation
+            - ```bash
+            file_1.csv → corrupt
+            file_2.csv → good
+            ```
+            - With Version 1:
+                - Entire folder ingestion may fail.
+            - With version 2:
+                - Only ```file_1.csv``` fails.
+                - ```file_2.csv``` processes normally.
+        - Enables DLQ + Replay
+            - Since I am extracting 
+                - ```bash
+                bucket
+                key
+                ```
+            - That information is preserved in Amazon SQS (DLQ)
+                - If Glue fails:
+                    - The exact file path remains inside the message.
+                    - You can replay exactly that file.
+                - Version 1 cannot replay specific files because it doesn't know which file caused failure.
+        - Cost Efficiency
+            - Version 1 causes:
+                - Folder scans
+                - Reading multiple files
+                - Unnecessary spark overhead
+            - Version 2:
+                - Reads exactly one file
+                - Lower DPU usage
+                - Faster execution
+                - Better cost control
+        - Debuggability:
+            - Version 2 prints:
+                - ```python
+                print(f"Received new object: s3://{bucket}/{key}")
+                ```
+                - Now your cloud watch logs show:
+                ```python
+                Received new object: s3://raw/sales/file123.csv
+                ```
+            - This allows us to immediately know
+                - Which file triggered
+                - Which file failed
+                - Which file succeeded
+        - Enables Idempotency
+            - Before starting Glue:
+                - Check DynamoDB
+                - Check metadata store
+                - Check processed files table
+        - Horizontal Scalability
+            - Version 2:
+                - 100 Lambda invocations
+                - 100 independent glue runs
+                - Fully parallel
+                - Isolated failures
+            - Version 1:
+                - Possibly 1 glue run scanning entire folder
+                - Bottleneck risk
+                - Partial processing
+        - Architecturally Clean
+            - Version 1 = "Batch job trigger"
+            - Version 2 = "Event payload processor"
+
+**STEP 3:**
+- Attach the role that you created for this lambda function here in this page.
+- Attaching role with appropriate permission is necessary for security purposes.
+- We want this lambda function to access services in AWS securely and give minimum possible permission for it to be able to function properly.
+![lambda_function_attach_role](images/production_grade_glue_implementation/lambda_setup/lambda_function_attach_role.png)
+![add_role_to_lambda](images/production_grade_glue_implementation/lambda_setup/add_role_to_lambda.png)
+
+**NOTE :**
+- If you have set everything correctly then you will see the logs in AWS cloudwatch for your lambda function
+![cloudwatch_logs_for_lambda](images/production_grade_glue_implementation/lambda_setup/cloudwatch_logs_for_lambda.png)
+- Here all your lambda function logs will be dumped
+![cloudwatch_logs_for_lambda2](images/production_grade_glue_implementation/lambda_setup/cloudwatch_logs_for_lambda2.png)
+
+
 #### Create an EventBridge
 **STEP 1:**
 - Setup trigger events

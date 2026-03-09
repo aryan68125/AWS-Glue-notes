@@ -2024,6 +2024,31 @@ In order to make incremental load pipeline production ready there few things I n
 
 ![create_event_bridge_6](images/production_grade_glue_implementation/event_bridge_setup/create_event_bridge_6.png)
 
+#### Room for further improvements in this 
+Your current setup works because:
+- You enabled Glue Job Bookmarks
+- You trigger Glue per file
+- You are not doing complex orchestration
+- You are not handling replay or partial failure logic
+
+Right now your incremental guarantee depends entirely on:
+- Glue bookmarks
+
+That works for:
+- Simple pipelines
+- Single-account setups
+- No replay requirements
+- No external state management
+- No manual backfills
+
+But bookmarks are:
+- Internal to Glue
+- Opaque
+- Not easily inspectable
+- Hard to coordinate across multiple services
+
+gpt chat TODO START WORKING FROM  HERE ---> https://chatgpt.com/share/69a6c8c2-7e4c-8006-92b0-aa63de00d015
+
 
 ## Creating an end-to-end ETL pipeline from source to dashboard (TODO)
 ```bash

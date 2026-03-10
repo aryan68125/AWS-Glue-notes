@@ -2111,10 +2111,10 @@ Current implementation have the infrastructure for replayability, but I have NOT
       "Sid": "__owner_statement",
       "Effect": "Allow",
       "Principal": {
-        "AWS": "arn:aws:iam::406868976171:root"
+        "AWS": "arn:aws:iam::406868912345:root"
       },
       "Action": "SQS:*",
-      "Resource": "arn:aws:sqs:ap-south-1:406868976171:sales-ingestion-dlq"
+      "Resource": "arn:aws:sqs:ap-south-1:406868912345:sales-ingestion-dlq"
     },
     {
       "Sid": "AllowEventBridgeToSendMessage",
@@ -2123,10 +2123,10 @@ Current implementation have the infrastructure for replayability, but I have NOT
         "Service": "events.amazonaws.com"
       },
       "Action": "sqs:SendMessage",
-      "Resource": "arn:aws:sqs:ap-south-1:406868976171:sales-ingestion-dlq",
+      "Resource": "arn:aws:sqs:ap-south-1:406868971234:sales-ingestion-dlq",
       "Condition": {
         "ArnEquals": {
-          "aws:SourceArn": "arn:aws:events:ap-south-1:406868976171:rule/ActivateLambdaFuncEventBridgeRules"
+          "aws:SourceArn": "arn:aws:events:ap-south-1:406868971234:rule/ActivateLambdaFuncEventBridgeRules"
         }
       }
     },
@@ -2137,10 +2137,10 @@ Current implementation have the infrastructure for replayability, but I have NOT
         "Service": "events.amazonaws.com"
       },
       "Action": "sqs:SendMessage",
-      "Resource": "arn:aws:sqs:ap-south-1:406868976171:sales-ingestion-dlq",
+      "Resource": "arn:aws:sqs:ap-south-1:406868971234:sales-ingestion-dlq",
       "Condition": {
         "ArnEquals": {
-          "aws:SourceArn": "arn:aws:events:ap-south-1:406868976171:rule/ActivateLambdaFuncEventBridgeRules"
+          "aws:SourceArn": "arn:aws:events:ap-south-1:406868912345:rule/ActivateLambdaFuncEventBridgeRules"
         }
       }
     }

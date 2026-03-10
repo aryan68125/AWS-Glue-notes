@@ -2047,7 +2047,849 @@ But bookmarks are:
 - Not easily inspectable
 - Hard to coordinate across multiple services
 
-gpt chat TODO START WORKING FROM  HERE ---> https://chatgpt.com/share/69a6c8c2-7e4c-8006-92b0-aa63de00d015
+Current implementation have the infrastructure for replayability, but I have NOT fully implemented replayability yet.
+- GAP 1 — Current system Don’t Track Processing State (BIGGEST ISSUE)
+    - REQUIRED FIX → Add Idempotency Store (DynamoDB)
+    - This is mandatory for replayability.
+- GAP 2 — Current System Doesn't Detect Glue Failures Properly
+    - Step Functions (BEST PRACTICE)
+        - waits for completion
+        - retries
+        - catches failure
+        - triggers DLQ
+- GAP 3 — Current system Don’t Have Replay Workflow Yet
+    - Right now DLQ exists but:
+    - user replay manually (not production-grade).
+
+## Improvement implementation on current system 
+### Implementation 
+#### Step 1 : Source S3 bucket setup
+- Enable events to be sent to EventBridge in your S3 bucket 
+- ![enable_event_bridge](images/production_grade_glue_version2_dlq_/S3_settings/enable_event_bridge.png)
+
+#### Step 2 : EventBridge setup 
+- The name of the event bridge is ```ActivateLambdaFuncEventBridgeRules```
+- Setup Trigger events for your EventBridge
+- ![setting_up_trigger_event](images/production_grade_glue_version2_dlq_/EventBridge/setting_up_trigger_event.png)
+
+- Event pattern (filter) that I set when setting up the Event Bridge
+```json
+{
+  "source": ["aws.s3"],
+  "detail-type": ["Object Created"],
+  "detail": {
+    "bucket": {
+      "name": ["aws-glue-s3-bucket-one"]
+    },
+    "object": {
+      "key": [{
+        "prefix": "raw_data/sales_data/"
+      }]
+    }
+  }
+}
+```
+
+- Setting up the targets that must be invoked if file is put inside the source S3 bucket
+- ![step_function_target_setup](images/production_grade_glue_version2_dlq_/EventBridge/step_function_target_setup.png)
+- One thing to note is that event if the image shows that I have used an existing role you must always select ```create a new role for this specific resource``` 
+- The reason the image shows the other option is because I have taken a screenshot of already existing EventBridge that's why.
+- You don't need to create role for this service manually AWS automatically creates a role with appropriate permissions for event bridge to use.
+- ![retry_policy_of_event_bridge](images/production_grade_glue_version2_dlq_/EventBridge/retry_policy_of_event_bridge.png)
+
+#### Step 3 : Setup a DLQ (Dead-Letter-Queue)
+- The name of this DLQ is ```sales-ingestion-dlq```
+- ![dlq_conf](images/production_grade_glue_version2_dlq_/sqs/dlq_conf.png)
+- ![encryption_dlq](images/production_grade_glue_version2_dlq_/sqs/encryption_dlq.png)
+- Access policy of DLQ
+```json
+{
+  "Version": "2012-10-17",
+  "Id": "__default_policy_ID",
+  "Statement": [
+    {
+      "Sid": "__owner_statement",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::406868976171:root"
+      },
+      "Action": "SQS:*",
+      "Resource": "arn:aws:sqs:ap-south-1:406868976171:sales-ingestion-dlq"
+    },
+    {
+      "Sid": "AllowEventBridgeToSendMessage",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "events.amazonaws.com"
+      },
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:ap-south-1:406868976171:sales-ingestion-dlq",
+      "Condition": {
+        "ArnEquals": {
+          "aws:SourceArn": "arn:aws:events:ap-south-1:406868976171:rule/ActivateLambdaFuncEventBridgeRules"
+        }
+      }
+    },
+    {
+      "Sid": "AWSEvents_ActivateLambdaFuncEventBridgeRules_dlq_41c9320f-edd2-4fde-ad71-2985e68b1d7c",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "events.amazonaws.com"
+      },
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:ap-south-1:406868976171:sales-ingestion-dlq",
+      "Condition": {
+        "ArnEquals": {
+          "aws:SourceArn": "arn:aws:events:ap-south-1:406868976171:rule/ActivateLambdaFuncEventBridgeRules"
+        }
+      }
+    }
+  ]
+}
+```
+- ![redrive_policy_dlq](images/production_grade_glue_version2_dlq_/sqs/redrive_policy_dlq.png)
+
+#### Step 4 : Create a step function
+- This step function will be used to not only start a Glue function but it will also be used to monitor if the glue job was a sucess or a failure 
+```bash
+RunGlueJob → Success
+          ↘ SendToDLQ → FailState
+```
+- How this state function works ?
+    - When a file lands in S3
+    - EventBridge triggers this Step function
+    - Step function runs glue job
+    - If the glue job fails then the event is send to DLQ
+
+```json
+{
+  "Comment": "Glue ETL Orchestration with DLQ",
+  "StartAt": "RunGlueJob",
+  "States": {
+    "RunGlueJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "ingest_sales_data",
+        "Arguments": {
+          "--source_bucket.$": "$.detail.bucket.name",
+          "--source_key.$": "$.detail.object.key"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "SendToDLQ"
+        }
+      ],
+      "Next": "Success"
+    },
+    "SendToDLQ": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage",
+      "Parameters": {
+        "QueueUrl": "arn:aws:sqs:ap-south-1:40686891234:sales-ingestion-dlq",
+        "MessageBody.$": "$"
+      },
+      "Next": "FailState"
+    },
+    "FailState": {
+      "Type": "Fail"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}
+```
+
+- ```"arn:aws:states:::glue:startJobRun.sync"```
+    - Start Glue job
+    - WAIT until it finishes
+- If ```.sync``` wasn’t used: Step Function would move immediately.
+
+```json
+"Arguments": {
+          "--source_bucket.$": "$.detail.bucket.name",
+          "--source_key.$": "$.detail.object.key"
+        }
+```
+- Here the step function is extracting the bucket name and object key from the event bridge and then passing it on to AWS glue ETL pipeline where we will be able to access it using ```source_bucket``` and ```source_key``` params.
+- In Glue ETL ```getResolvedOptions(sys.argv, ...)``` this code will catch all the params passed on by this step function
+
+```json
+"Retry": [{
+  "ErrorEquals": ["States.TaskFailed"],
+  "IntervalSeconds": 30,
+  "MaxAttempts": 2,
+  "BackoffRate": 2
+}]
+```
+- Here I have decided to put the retry logic in the step function instead of eventBridge because it does makes more sense since step function is not only the one startiing the glue job but it is also the one waiting if the job was a success or a failure.
+- Why this is done ?
+    - transient cluster issues
+    - network blips 
+    - service throttling
+
+```json
+"Catch": [{
+  "ErrorEquals": ["States.ALL"],
+  "Next": "SendToDLQ"
+}]
+```
+Meaning:
+- If STILL fails after retries
+- Send to DLQ
+
+- You will have to add an AWS managed policy ```AmazonSQSFullAccess``` to the generated IAM role when creating a Step function.
+
+#### Step 5 : Create another step function to handle manual replays in case of a failure
+- The name of this step function is ```replay_failed_ingestion```
+- This is the second step function : ```DLQ → StepFn → Glue (retry) → Success```
+- It replays job safely
+    - This step function reads the message from DLQ ```sales-ingestion-dlq```
+    - Extracts original payload
+    - Re-runs Glue
+    - Deletes message if success
+- ```"MaxNumberOfMessages": 1```
+    - Pulls only one message per execution this prevents overload + ensures a controlled replay.
+- ```"Next": "FailState"```
+    - If replay still fails then stop here
+    - In this case DLQ message will not be deleted
+- ```"Resource": "arn:aws:states:::aws-sdk:sqs:deleteMessage"```
+    - Deletes message only if: 
+        - Replay is successfull
+- Here is the full code for this step function
+```json
+{
+  "Comment": "Replay ETL from DLQ with batching, tracking, and safeguards",
+  "StartAt": "ReceiveFromDLQ",
+  "States": {
+    "ReceiveFromDLQ": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:sqs:receiveMessage",
+      "Parameters": {
+        "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868971234/sales-ingestion-dlq",
+        "MaxNumberOfMessages": 10
+      },
+      "ResultPath": "$.dlq",
+      "Next": "CheckIfEmpty"
+    },
+    "CheckIfEmpty": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.dlq.Messages",
+          "IsPresent": false,
+          "Next": "Success"
+        }
+      ],
+      "Default": "ReplayBatch"
+    },
+    "ReplayBatch": {
+      "Type": "Map",
+      "ItemsPath": "$.dlq.Messages",
+      "MaxConcurrency": 2,
+      "Iterator": {
+        "StartAt": "ExtractPayload",
+        "States": {
+          "ExtractPayload": {
+            "Type": "Pass",
+            "Parameters": {
+              "receiptHandle.$": "$.ReceiptHandle",
+              "body.$": "States.StringToJson($.Body)"
+            },
+            "ResultPath": "$.parsed",
+            "Next": "ParseCause"
+          },
+          "ParseCause": {
+            "Type": "Pass",
+            "Parameters": {
+              "receiptHandle.$": "$.parsed.receiptHandle",
+              "cause.$": "States.StringToJson($.parsed.body.Cause)"
+            },
+            "ResultPath": "$.final",
+            "Next": "CheckReplayCount"
+          },
+          "CheckReplayCount": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:dynamodb:getItem",
+            "Parameters": {
+              "TableName": "dlq_replay_tracking",
+              "Key": {
+                "object_key": {
+                  "S.$": "$.final.cause.Arguments['--source_key']"
+                }
+              }
+            },
+            "ResultPath": "$.ddb",
+            "Next": "ReplayLimitCheck"
+          },
+          "ReplayLimitCheck": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Variable": "$.ddb.Item.retry_count.N",
+                "NumericGreaterThanEquals": 3,
+                "Next": "SkipPoisonMessage"
+              }
+            ],
+            "Default": "RunGlueJob"
+          },
+          "RunGlueJob": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::glue:startJobRun.sync",
+            "Parameters": {
+              "JobName": "ingest_sales_data",
+              "Arguments": {
+                "--source_bucket.$": "$.final.cause.Arguments['--source_bucket']",
+                "--source_key.$": "$.final.cause.Arguments['--source_key']"
+              }
+            },
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "States.TaskFailed"
+                ],
+                "IntervalSeconds": 30,
+                "MaxAttempts": 2,
+                "BackoffRate": 2
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "Next": "UpdateRetryCount"
+              }
+            ],
+            "Next": "DeleteMessage"
+          },
+          "UpdateRetryCount": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:dynamodb:updateItem",
+            "Parameters": {
+              "TableName": "dlq_replay_tracking",
+              "Key": {
+                "object_key": {
+                  "S.$": "$.final.cause.Arguments['--source_key']"
+                }
+              },
+              "UpdateExpression": "ADD retry_count :inc",
+              "ExpressionAttributeValues": {
+                ":inc": {
+                  "N": "1"
+                }
+              }
+            },
+            "Next": "FailState"
+          },
+          "DeleteMessage": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:sqs:deleteMessage",
+            "Parameters": {
+              "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868971234/sales-ingestion-dlq",
+              "ReceiptHandle.$": "$.final.receiptHandle"
+            },
+            "Next": "SuccessState"
+          },
+          "SkipPoisonMessage": {
+            "Type": "Pass",
+            "Next": "SuccessState"
+          },
+          "FailState": {
+            "Type": "Fail"
+          },
+          "SuccessState": {
+            "Type": "Succeed"
+          }
+        }
+      },
+      "Next": "Success"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}
+```
+
+#### Step 6 : Create a glue ETL job
+- Before you create this ELT you will have to create an IAM role that give appropriate permission to this ETL for it to be able to utilize the S3 and Glue catalog so that it can register the data in the table so that the users can use Athena to query the data using sql.
+- 
+- Here is the complete code
+
+```python
+import sys
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.job import Job
+from awsglue.gluetypes import *
+from awsgluedq.transforms import EvaluateDataQuality
+from awsglue import DynamicFrame
+
+from functools import reduce
+from pyspark.sql import functions as F
+
+def sparkSqlQuery(glueContext, query, mapping, transformation_ctx) -> DynamicFrame:
+    for alias, frame in mapping.items():
+        frame.toDF().createOrReplaceTempView(alias)
+    result = spark.sql(query)
+    return DynamicFrame.fromDF(result, glueContext, transformation_ctx)
+def _find_null_fields(ctx, schema, path, output, nullStringSet, nullIntegerSet, frame):
+    if isinstance(schema, StructType):
+        for field in schema:
+            new_path = path + "." if path != "" else path
+            output = _find_null_fields(ctx, field.dataType, new_path + field.name, output, nullStringSet, nullIntegerSet, frame)
+    elif isinstance(schema, ArrayType):
+        if isinstance(schema.elementType, StructType):
+            output = _find_null_fields(ctx, schema.elementType, path, output, nullStringSet, nullIntegerSet, frame)
+    elif isinstance(schema, NullType):
+        output.append(path)
+    else:
+        x, distinct_set = frame.toDF(), set()
+        for i in x.select(path).distinct().collect():
+            distinct_ = i[path.split('.')[-1]]
+            if isinstance(distinct_, list):
+                distinct_set |= set([item.strip() if isinstance(item, str) else item for item in distinct_])
+            elif isinstance(distinct_, str) :
+                distinct_set.add(distinct_.strip())
+            else:
+                distinct_set.add(distinct_)
+        if isinstance(schema, StringType):
+            if distinct_set.issubset(nullStringSet):
+                output.append(path)
+        elif isinstance(schema, IntegerType) or isinstance(schema, LongType) or isinstance(schema, DoubleType):
+            if distinct_set.issubset(nullIntegerSet):
+                output.append(path)
+    return output
+
+def drop_nulls(glueContext, frame, nullStringSet, nullIntegerSet, transformation_ctx) -> DynamicFrame:
+    nullColumns = _find_null_fields(frame.glue_ctx, frame.schema(), "", [], nullStringSet, nullIntegerSet, frame)
+    return DropFields.apply(frame=frame, paths=nullColumns, transformation_ctx=transformation_ctx)
+
+args = getResolvedOptions(sys.argv, [
+    'JOB_NAME',
+    'source_bucket',
+    'source_key'
+])
+
+source_bucket = args['source_bucket']
+source_key = args['source_key']
+
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+job = Job(glueContext)
+job.init(args['JOB_NAME'], args)
+
+# Default ruleset used by all target nodes with data quality enabled
+DEFAULT_DATA_QUALITY_RULESET = """Rules = [
+    ColumnCount > 0,
+
+    IsComplete "rating",
+    IsComplete "rating_count",
+    IsComplete "discounted_price",
+    IsComplete "actual_price",
+
+    ColumnValues "rating" >= 0,
+    ColumnValues "rating_count" >= 0,
+    ColumnValues "discounted_price" >= 0,
+    ColumnValues "actual_price" >= 0,
+    ColumnValues "discount_percentage" >= 0,
+    
+    IsUnique "product_id"
+]"""
+
+# -------- DELIMITER CORRUPTION CHECK -------- #
+import csv
+import io
+
+raw_lines = spark.read.text(f"s3://{source_bucket}/{source_key}").collect()
+
+if len(raw_lines) < 2:
+    raise Exception("Glue Visual ETL | Corrupted CSV detected (file has no data rows)")
+
+def count_csv_columns(line: str) -> int:
+    """Count columns correctly, respecting quoted fields containing commas."""
+    try:
+        return len(next(csv.reader(io.StringIO(line))))
+    except StopIteration:
+        return 0
+
+header_line = raw_lines[0][0]
+expected_col_count = count_csv_columns(header_line)
+
+bad_row_indices = []
+for i, row in enumerate(raw_lines[1:], start=2):
+    line = row[0]
+    actual_col_count = count_csv_columns(line)
+    if actual_col_count != expected_col_count:
+        bad_row_indices.append((i, actual_col_count, line[:80]))
+
+if bad_row_indices:
+    details = "\n".join(
+        [f"  Line {idx}: expected {expected_col_count} cols, got {actual} → {preview}..."
+         for idx, actual, preview in bad_row_indices]
+    )
+    raise Exception(
+        f"Glue Visual ETL | Corrupted CSV detected — {len(bad_row_indices)} row(s) have wrong column count "
+        f"(likely semicolons used as delimiters instead of commas):\n{details}"
+    )
+
+print(f"Glue Visual ETL | Column count validation passed: all rows have {expected_col_count} columns")
+# -------- DELIMITER CORRUPTION CHECK -------- #
+
+# Script generated for node Raw data source S3
+RawdatasourceS3_node1772431168408 = glueContext.create_dynamic_frame.from_options(format_options={"quoteChar": "\"", "withHeader": True, "separator": ",", "mode": "PERMISSIVE", "optimizePerformance": False}, connection_type="s3", format="csv", 
+    # connection_options={"paths": ["s3://aws-glue-s3-bucket-one/raw_data/sales_data/"], "recurse": True}, 
+    connection_options={"paths": [f"s3://{source_bucket}/{source_key}"],"recurse": False},
+    transformation_ctx="RawdatasourceS3_node1772431168408")
+# for debugging only
+print(f"Glue Visual ETL | Processing file: s3://{source_bucket}/{source_key}")
+
+df = RawdatasourceS3_node1772431168408.toDF()
+
+print("Glue Visual ETL | DEBUG bucket:", source_bucket)
+print("Glue Visual ETL | DEBUG key:", source_key)
+print("Glue Visual ETL | DEBUG columns:", df.columns)
+print("Glue Visual ETL | DEBUG row count:", df.count())
+print("Glue Visual ETL | DEBUG schema:", df.schema)
+print("Glue Visual ETL | DEBUG sample rows:", df.limit(2).toPandas())
+
+# -------- CORRUPTION CHECK (SAFE VERSION) -------- #
+
+# If Spark inferred no columns → corrupted file
+if len(df.columns) == 0:
+    raise Exception("Glue Visual ETL | Corrupted CSV detected (no columns inferred)")
+
+expected_cols = len(df.columns)
+
+# If dataframe empty → corrupted file
+if df.limit(1).count() == 0:
+    raise Exception("Glue Visual ETL | Corrupted CSV detected (empty dataframe)")
+
+# Row-level corruption detection
+null_exprs = [F.col(c).isNull().cast("int") for c in df.columns]
+
+bad_rows = df.filter(
+    reduce(lambda a, b: a + b, null_exprs) > expected_cols * 0.7
+)
+
+if bad_rows.limit(1).count() > 0:
+    raise Exception("Glue Visual ETL | Corrupted CSV detected (null-heavy rows)")
+# -------- CORRUPTION CHECK (SAFE VERSION) -------- #
+
+# Script generated for node SQL Query
+SqlQuery61 = '''
+SELECT
+    product_id,
+    product_name,
+    category,
+    about_product,
+    user_id,
+    user_name,
+    review_id,
+    review_title,
+    review_content,
+    img_link,
+    product_link,
+
+    -- discounted_price: ₹149 → 149.0
+    CAST(
+        REGEXP_REPLACE(discounted_price, '[^0-9.]', '')
+        AS DOUBLE
+    ) AS discounted_price,
+
+    -- actual_price: ₹1,000 → 1000.0
+    CAST(
+        REGEXP_REPLACE(actual_price, '[^0-9.]', '')
+        AS DOUBLE
+    ) AS actual_price,
+
+    -- discount_percentage: 85% → 85.0
+    CAST(
+        REGEXP_REPLACE(discount_percentage, '[^0-9.]', '')
+        AS DOUBLE
+    ) AS discount_percentage,
+
+    -- rating: 3.9 → 3.9
+    CAST(
+        REGEXP_REPLACE(rating, '[^0-9.]', '')
+        AS DOUBLE
+    ) AS rating,
+
+    -- rating_count: 24,871 → 24871
+    CAST(
+        REGEXP_REPLACE(rating_count, '[^0-9]', '')
+        AS INT
+    ) AS rating_count
+
+FROM myDataSource;
+'''
+SQLQuery_node1772431252856 = sparkSqlQuery(glueContext, query = SqlQuery61, mapping = {"myDataSource":RawdatasourceS3_node1772431168408}, transformation_ctx = "SQLQuery_node1772431252856")
+
+# Script generated for node Drop Null Fields
+DropNullFields_node1772431857999 = drop_nulls(glueContext, frame=SQLQuery_node1772431252856, nullStringSet={"", "null"}, nullIntegerSet={-1}, transformation_ctx="DropNullFields_node1772431857999")
+
+# Script generated for node Silver layer data sink S3
+EvaluateDataQuality().process_rows(frame=DropNullFields_node1772431857999, ruleset=DEFAULT_DATA_QUALITY_RULESET, publishing_options={"dataQualityEvaluationContext": "EvaluateDataQuality_node1772428328053", "enableDataQualityResultsPublishing": True}, additional_options={"dataQualityResultsPublishing.strategy": "BEST_EFFORT", "observations.scope": "ALL"})
+SilverlayerdatasinkS3_node1772432020219 = glueContext.getSink(path="s3://data-sink-one/silver_layer/sales_data/", connection_type="s3", updateBehavior="LOG", partitionKeys=["category"], enableUpdateCatalog=True, transformation_ctx="SilverlayerdatasinkS3_node1772432020219")
+SilverlayerdatasinkS3_node1772432020219.setCatalogInfo(catalogDatabase="aws-glue-tutorial-aditya",catalogTableName="silver_table_sales_data")
+SilverlayerdatasinkS3_node1772432020219.setFormat("glueparquet", compression="snappy")
+SilverlayerdatasinkS3_node1772432020219.writeFrame(DropNullFields_node1772431857999)
+job.commit()
+```
+
+### CSV CORRUPTION CHECK (DEEP EXPLANATION)
+- ```spark.read.text(...).collect()```
+    - Reads raw file line-by-line
+    - Returns list to driver
+- Why check < 2 rows?
+    - ```if len(raw_lines) < 2:```
+    - Means:
+        - 1 row → only header
+        - 0 row → empty file
+    - Hence invalid dataset
+- ```count_csv_columns()```
+    - ```csv.reader(io.StringIO(line))```
+    - Why?
+        - Handles quoted commas correctly
+    - Example : ```"a,b",c```
+    - correctly counted as 2 columns.
+- Row validation logic
+    - ```for i, row in enumerate(raw_lines[1:], start=2):```
+    - Starts from row 2 because: row1= header
+    - Then : ```actual_col_count != expected_col_count```
+    - If mismatch then corrupted row
+- Error reporting
+    - ```line[:80]```
+    - Show preview only (Safe logging)
+- Final check
+    - ```if bad_row_indices:```
+    - If any corrupted now --> fail job
+
+### HOW EVENTBRIDGE + STEP FUNCTION WORKS
+#### Step 1 : File arrives
+- EventBridge is enabled on bucket
+- S3 sends events to EventBridge automatically.
+
+#### Step 2 : EventBridge rule triggers
+Event pattern (Filter)
+
+```json
+{
+  "source": ["aws.s3"],
+  "detail-type": ["Object Created"],
+  "detail": {
+    "bucket": {
+      "name": ["aws-glue-s3-bucket-one"]
+    },
+    "object": {
+      "key": [{
+        "prefix": "raw_data/sales_data/"
+      }]
+    }
+  }
+}
+```
+
+Matches:
+- PutObject
+- Multipart upload complete
+
+#### Step 3 : Filter applied
+The filter set in the Event pattern 
+
+```bash
+"prefix": "raw_data/sales_data/"
+```
+
+Only those files trigger the Step function.
+
+#### Step 4 : Step Function starts
+EventBridge sends full event payload:
+```bash
+detail.bucket.name
+detail.object.key
+```
+
+#### Step 5 : Step Function → Glue
+Passes params via:
+```bash
+--source_bucket
+--source_key
+```
+
+Here is my complete step function code : 
+```json
+{
+  "Comment": "Glue ETL Orchestration with DLQ",
+  "StartAt": "RunGlueJob",
+  "States": {
+    "RunGlueJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "ingest_sales_data",
+        "Arguments": {
+          "--source_bucket.$": "$.detail.bucket.name",
+          "--source_key.$": "$.detail.object.key"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "SendToDLQ"
+        }
+      ],
+      "Next": "Success"
+    },
+    "SendToDLQ": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage",
+      "Parameters": {
+        "QueueUrl": "arn:aws:sqs:ap-south-1:406868123456:sales-ingestion-dlq",
+        "MessageBody.$": "$"
+      },
+      "Next": "FailState"
+    },
+    "FailState": {
+      "Type": "Fail"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}
+```
+
+#### Architecture 
+```S3 → EventBridge → StepFunction → Glue → Silver S3```
+
+### Common Data Quality rules in AWS Visual ETL pipeline 
+Common DQ rules
+You can use:
+- IsComplete
+- IsUnique
+- RowCount
+- ColumnCount
+- ColumnValues BETWEEN
+- ColumnLength
+- MatchesRegex
+- ReferentialIntegrity
+
+Proposed : Other better validation ways (prod)
+
+I should also add:
+
+✔ schema enforcement
+✔ row-count checks
+✔ duplicate detection
+✔ anomaly detection
+✔ statistical drift checks
+
+### Create a step function
+Create a step function with a name ```orchestrate_data_ingestion``` 
+```json
+{
+  "Comment": "Glue ETL Orchestration with DLQ",
+  "StartAt": "StartGlueJob",
+  "States": {
+    "StartGlueJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun",
+      "Parameters": {
+        "JobName": "ingest_sales_data",
+        "Arguments": {
+          "--source_bucket.$": "$.detail.bucket.name",
+          "--source_key.$": "$.detail.object.key"
+        }
+      },
+      "ResultPath": "$.glueResult",
+      "Next": "WaitBeforeCheck"
+    },
+    "WaitBeforeCheck": {
+      "Type": "Wait",
+      "Seconds": 20,
+      "Next": "CheckGlueStatus"
+    },
+    "CheckGlueStatus": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:getJobRun",
+      "Parameters": {
+        "JobName": "ingest_sales_data",
+        "RunId.$": "$.glueResult.JobRunId"
+      },
+      "ResultPath": "$.statusResult",
+      "Next": "EvaluateStatus"
+    },
+    "EvaluateStatus": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.statusResult.JobRun.JobRunState",
+          "StringEquals": "SUCCEEDED",
+          "Next": "Success"
+        },
+        {
+          "Variable": "$.statusResult.JobRun.JobRunState",
+          "StringEquals": "FAILED",
+          "Next": "SendToDLQ"
+        },
+        {
+          "Variable": "$.statusResult.JobRun.JobRunState",
+          "StringEquals": "STOPPED",
+          "Next": "SendToDLQ"
+        }
+      ],
+      "Default": "WaitBeforeCheck"
+    },
+    "SendToDLQ": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage",
+      "Parameters": {
+        "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868976171/sales-ingestion-dlq",
+        "MessageBody.$": "$"
+      },
+      "Next": "FailState"
+    },
+    "FailState": {
+      "Type": "Fail"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}
+```
 
 
 ## Creating an end-to-end ETL pipeline from source to dashboard (TODO)

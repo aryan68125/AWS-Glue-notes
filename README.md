@@ -2429,9 +2429,31 @@ Meaning:
 
 #### Step 6 : Create a glue ETL job
 - Before you create this ELT you will have to create an IAM role that give appropriate permission to this ETL for it to be able to utilize the S3 and Glue catalog so that it can register the data in the table so that the users can use Athena to query the data using sql.
-- 
+- The IAM role that is used by this ETL job is named ```AWSGlueRole```
+    - In this role you will have to attach an AWS managed policy called ```AWSGlueServiceRole```
+    - Then one more custom policy you will have to attach is a custom policy named ```LimitedS3PermissionPolicy```
+    ```json
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Action": [
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "s3:ListBucket"
+                ],
+                "Resource": [
+                    "arn:aws:s3:::aws-glue-s3-bucket-one",
+                    "arn:aws:s3:::aws-glue-s3-bucket-one/*",
+                    "arn:aws:s3:::data-sink-one",
+                    "arn:aws:s3:::data-sink-one/*"
+                ]
+            }
+        ]
+    }
+    ```
 - Here is the complete code
-
 ```python
 import sys
 from awsglue.transforms import *

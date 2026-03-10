@@ -2389,7 +2389,7 @@ Meaning:
             "Retry": [
               {
                 "ErrorEquals": [
-                  "States.TaskFailed"
+                  "States.ALL"
                 ],
                 "IntervalSeconds": 30,
                 "MaxAttempts": 2,

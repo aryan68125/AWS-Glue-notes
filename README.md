@@ -2786,65 +2786,21 @@ Passes params via:
 --source_key
 ```
 
-Here is my complete step function code : 
-```json
-{
-  "Comment": "Glue ETL Orchestration with DLQ",
-  "StartAt": "RunGlueJob",
-  "States": {
-    "RunGlueJob": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::glue:startJobRun.sync",
-      "Parameters": {
-        "JobName": "ingest_sales_data",
-        "Arguments": {
-          "--source_bucket.$": "$.detail.bucket.name",
-          "--source_key.$": "$.detail.object.key"
-        }
-      },
-      "Retry": [
-        {
-          "ErrorEquals": [
-            "States.TaskFailed"
-          ],
-          "IntervalSeconds": 30,
-          "MaxAttempts": 2,
-          "BackoffRate": 2
-        }
-      ],
-      "Catch": [
-        {
-          "ErrorEquals": [
-            "States.ALL"
-          ],
-          "Next": "SendToDLQ"
-        }
-      ],
-      "Next": "Success"
-    },
-    "SendToDLQ": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::sqs:sendMessage",
-      "Parameters": {
-        "QueueUrl": "arn:aws:sqs:ap-south-1:406868123456:sales-ingestion-dlq",
-        "MessageBody.$": "$"
-      },
-      "Next": "FailState"
-    },
-    "FailState": {
-      "Type": "Fail"
-    },
-    "Success": {
-      "Type": "Succeed"
-    }
-  }
-}
-```
-
 #### Architecture 
 ```S3 → EventBridge → StepFunction → Glue → Silver S3```
 
-### Common Data Quality rules in AWS Visual ETL pipeline 
+
+
+
+
+
+
+
+
+
+
+
+### Common Data Quality rules in AWS Visual ETL pipeline (TODO)
 Common DQ rules
 You can use:
 - IsComplete
@@ -2866,80 +2822,17 @@ I should also add:
 ✔ anomaly detection
 ✔ statistical drift checks
 
-### Create a step function
-Create a step function with a name ```orchestrate_data_ingestion``` 
-```json
-{
-  "Comment": "Glue ETL Orchestration with DLQ",
-  "StartAt": "StartGlueJob",
-  "States": {
-    "StartGlueJob": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::glue:startJobRun",
-      "Parameters": {
-        "JobName": "ingest_sales_data",
-        "Arguments": {
-          "--source_bucket.$": "$.detail.bucket.name",
-          "--source_key.$": "$.detail.object.key"
-        }
-      },
-      "ResultPath": "$.glueResult",
-      "Next": "WaitBeforeCheck"
-    },
-    "WaitBeforeCheck": {
-      "Type": "Wait",
-      "Seconds": 20,
-      "Next": "CheckGlueStatus"
-    },
-    "CheckGlueStatus": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::glue:getJobRun",
-      "Parameters": {
-        "JobName": "ingest_sales_data",
-        "RunId.$": "$.glueResult.JobRunId"
-      },
-      "ResultPath": "$.statusResult",
-      "Next": "EvaluateStatus"
-    },
-    "EvaluateStatus": {
-      "Type": "Choice",
-      "Choices": [
-        {
-          "Variable": "$.statusResult.JobRun.JobRunState",
-          "StringEquals": "SUCCEEDED",
-          "Next": "Success"
-        },
-        {
-          "Variable": "$.statusResult.JobRun.JobRunState",
-          "StringEquals": "FAILED",
-          "Next": "SendToDLQ"
-        },
-        {
-          "Variable": "$.statusResult.JobRun.JobRunState",
-          "StringEquals": "STOPPED",
-          "Next": "SendToDLQ"
-        }
-      ],
-      "Default": "WaitBeforeCheck"
-    },
-    "SendToDLQ": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::sqs:sendMessage",
-      "Parameters": {
-        "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868976171/sales-ingestion-dlq",
-        "MessageBody.$": "$"
-      },
-      "Next": "FailState"
-    },
-    "FailState": {
-      "Type": "Fail"
-    },
-    "Success": {
-      "Type": "Succeed"
-    }
-  }
-}
-```
+
+
+
+
+
+
+
+
+
+
+
 
 
 ## Creating an end-to-end ETL pipeline from source to dashboard (TODO)

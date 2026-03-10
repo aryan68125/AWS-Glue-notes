@@ -2179,7 +2179,7 @@ RunGlueJob → Success
       "Retry": [
         {
           "ErrorEquals": [
-            "States.TaskFailed"
+            "States.ALL"
           ],
           "IntervalSeconds": 30,
           "MaxAttempts": 2,
@@ -2200,7 +2200,7 @@ RunGlueJob → Success
       "Type": "Task",
       "Resource": "arn:aws:states:::sqs:sendMessage",
       "Parameters": {
-        "QueueUrl": "arn:aws:sqs:ap-south-1:40686891234:sales-ingestion-dlq",
+        "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868971234/sales-ingestion-dlq",
         "MessageBody.$": "$"
       },
       "Next": "FailState"
@@ -2255,6 +2255,34 @@ Meaning:
 
 - You will have to add an AWS managed policy ```AmazonSQSFullAccess``` to the generated IAM role when creating a Step function.
 
+**NOTICE :**
+
+**There was an issue related to where when ETL fails the step function was not sending the message to DLQ**
+- This happened only when the ETL recieved a corrupt csv file.
+- This happened because of the code below
+```json
+"Retry": [{
+  "ErrorEquals": ["States.TaskFailed"],
+  "IntervalSeconds": 30,
+  "MaxAttempts": 2,
+  "BackoffRate": 2
+}]
+```
+- ```"ErrorEquals": ["States.TaskFailed"],``` Glue ETL can return not only TaskFailed but other types of failure states as well
+- solution is to use ```"States.ALL"``` instead of ```"States.TaskFailed"``` take a look at the code below and replace the above one with this
+```json
+"Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+```
+
 #### Step 5 : Create another step function to handle manual replays in case of a failure
 - The name of this step function is ```replay_failed_ingestion```
 - This is the second step function : ```DLQ → StepFn → Glue (retry) → Success```
@@ -2281,7 +2309,7 @@ Meaning:
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:sqs:receiveMessage",
       "Parameters": {
-        "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868971234/sales-ingestion-dlq",
+        "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868976171/sales-ingestion-dlq",
         "MaxNumberOfMessages": 10
       },
       "ResultPath": "$.dlq",
@@ -2401,7 +2429,7 @@ Meaning:
             "Type": "Task",
             "Resource": "arn:aws:states:::aws-sdk:sqs:deleteMessage",
             "Parameters": {
-              "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868971234/sales-ingestion-dlq",
+              "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868976171/sales-ingestion-dlq",
               "ReceiptHandle.$": "$.final.receiptHandle"
             },
             "Next": "SuccessState"

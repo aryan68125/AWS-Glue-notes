@@ -1,0 +1,16 @@
+product_id,product_name,category,about_product,user_id,user_name,review_id,review_title,review_content,img_link,product_link,discounted_price,actual_price,discount_percentage,rating,rating_count
+B0TEST001,Portable Laptop Stand,Electronics,Adjustable aluminum laptop stand for desk,U001,Rahul Verma,R001,Very useful,Helps reduce neck strain,https://example.com/img1.jpg,https://example.com/p1,899,1499,40,4.5,1245
+B0TEST002,Fast Charging Cable,Electronics,Durable USB C fast charging cable,U002,Anita Sharma,R002,Works well,Charges quickly without heating,https://example.com/img2.jpg,https://example.com/p2,299,599,50,4.2,980
+B0TEST003,Wireless Mouse,Electronics,Slim ergonomic wireless mouse,U003,Amit Patel,R003,Good quality,Smooth movement and silent clicks,https://example.com/img3.jpg,https://example.com/p3,499,799,38,4.4,1102
+B0TEST004,Notebook Set,Stationery,Premium ruled notebook pack,U004,Pooja Singh,R004,Nice paper quality,Perfect for daily notes,https://example.com/img4.jpg,https://example.com/p4,199,349,43,4.1,670
+B0TEST005,Water Bottle,Home,Stainless steel insulated bottle,U005,Suresh Kumar,R005,Keeps water cold,Very good insulation,https://example.com/img5.jpg,https://example.com/p5,699,999,30,4.6;1540
+B0TEST006,LED Desk Lamp,Electronics,Eye-care LED desk lamp,U006,Neha Joshi,R006,Bright and stable,Good for study sessions,https://example.com/img6.jpg,https://example.com/p6,799,1299,38;4.3,812
+B0TEST007,Phone Holder,Accessories,Adjustable phone holder stand,U007,Rohit Mehta,R007,Very stable,Holds phone firmly,https://example.com/img7.jpg,https://example.com/p7,249,399;37,4.2,905
+B0TEST008,Backpack Bag,Travel,Waterproof laptop backpack,U008,Meena Iyer,R008,Spacious design,Fits laptop and books easily,https://example.com/img8.jpg,https://example.com/p8;1199,1899,37,4.5,1430
+B0TEST009;Headphones,Electronics,Noise-cancelling headphones,U009,Vikram Rao,R009,Great sound,Comfortable for long use,https://example.com/img9.jpg,https://example.com/p9,1499,2499,40,4.6,1870
+B0TEST010,Coffee Mug,Home,Ceramic coffee mug,U010,Kavita Nair,R010,Looks good,Perfect size for coffee,https://example.com/img10.jpg,https://example.com/p10,199,299,33,4,512
+B0TEST011,USB Hub,Electronics,Multiport USB hub adapter,U011,Sachin Das,R011,Very helpful,Works as expected,https://example.com/img11.jpg,https://example.com/p11,599,999,40,4.3,733
+B0TEST012,Keyboard Cover,Accessories,Slim silicone keyboard cover,U012,Priya Menon,R012,Fits well,Protects from dust,https://example.com/img12.jpg,https://example.com/p12,149,249,40,4.1,420
+B0TEST013,Extension Board,Electronics,6-socket surge protector,U013,Arjun Kapoor,R013,Very useful,Safe and durable,https://example.com/img13.jpg,https://example.com/p13,499,799,38,4.4,889
+B0TEST014,Sticky Notes,Stationery,Colorful sticky note set,U014,Sunita Reddy,R014,Good adhesive,Useful for reminders,https://example.com/img14.jpg,https://example.com/p14,99,199,50,4,310
+B0TEST015,Tablet Stand,Electronics,Adjustable tablet stand,U015,Manoj Gupta,R015,Works perfectly,Good build quality,https://example.com/img15.jpg,https://example.com/p15,349,599,42,4.3,658

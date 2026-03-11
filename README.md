@@ -2792,7 +2792,7 @@ DEFAULT_DATA_QUALITY_RULESET = """Rules = [
     - logs results
     - publishes metrics
     - (optionally) fails job
-- ```ColumnCount == 16,```
+- ```ColumnCount = 16,```
     - In my case the csv files had 16 columns so I have made sure that the csv that is about to be processed must have 16 columns exactly.
     - This prevents data from silent schema drift in case the upstream service/application removes a column in the csv files.
     - Cannot allow schema drift at all cost because it will break all the down stream applications.
@@ -2806,6 +2806,17 @@ DEFAULT_DATA_QUALITY_RULESET = """Rules = [
     - It makes sure that ```rating, rating_count, discounted_price, actual_price, discount_percentage``` columns does not have any negative data values in them.
 - ```IsUnique "product_id"```
     - This makes sure that the product_id is unique and prevents data duplication
+
+- **Issue I faced :**
+    - I accidently used this rule ```ColumnCount == 16,``` instead of this ```ColumnCount = 16,``` 
+    - Because of this my AWS glue ETL pipeline was failing which is to be expected 
+    - The bigger concern for me was this that it was not sending message to DLQ as it should. 
+    - Reason for this happening:
+        - The step function checks for the final job state and not the logs that is the reason the flow in the step function never reaches to the point where it sends the message to DLQ hence no message is found in the DLQ even when the ETL job fails.
+    - Solution 
+        - All you have to do is wrap the code where you are evaluating the data quality rules in try except. This should send message to DLQ in case the ETL pipeline fails.
+        - In order to test it I am deliberately keeping the wrong rule in the section where I have defined all of my data quality rules ```ColumnCount == 16,```.
+
 
 #### Step 3 : Filter applied
 The filter set in the Event pattern 
@@ -2831,7 +2842,10 @@ Passes params via:
 ```
 
 #### Architecture 
+Current
 ```S3 → EventBridge → StepFunction → Glue → Silver S3```
+Implement this architecture tomorrow 
+```S3 → EventBridge → SQS → StepFn (poller) → Glue (1 at a time) → Silver S3```
 
 ### Common Data Quality rules in AWS Visual ETL pipeline
 Common DQ rules

@@ -2789,18 +2789,7 @@ Passes params via:
 #### Architecture 
 ```S3 → EventBridge → StepFunction → Glue → Silver S3```
 
-
-
-
-
-
-
-
-
-
-
-
-### Common Data Quality rules in AWS Visual ETL pipeline (TODO)
+### Common Data Quality rules in AWS Visual ETL pipeline
 Common DQ rules
 You can use:
 - IsComplete

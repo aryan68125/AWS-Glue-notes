@@ -2763,6 +2763,50 @@ Matches:
 - PutObject
 - Multipart upload complete
 
+The code below is the rules defined in pyspark script in AWS glue catalog 
+```python
+# Default ruleset used by all target nodes with data quality enabled
+DEFAULT_DATA_QUALITY_RULESET = """Rules = [
+    ColumnCount > 0,
+
+    IsComplete "rating",
+    IsComplete "rating_count",
+    IsComplete "discounted_price",
+    IsComplete "actual_price",
+
+    ColumnValues "rating" >= 0,
+    ColumnValues "rating_count" >= 0,
+    ColumnValues "discounted_price" >= 0,
+    ColumnValues "actual_price" >= 0,
+    ColumnValues "discount_percentage" >= 0,
+    
+    IsUnique "product_id"
+]"""
+```
+- This is an AWS Glue data quality ruleset.
+- This tells glue 
+    - Check if my dataset is structurally valid before writing.
+- What it does ? 
+    - runs all rules
+    - measures pass/fail
+    - logs results
+    - publishes metrics
+    - (optionally) fails job
+- ```ColumnCount == 16,```
+    - In my case the csv files had 16 columns so I have made sure that the csv that is about to be processed must have 16 columns exactly.
+    - This prevents data from silent schema drift in case the upstream service/application removes a column in the csv files.
+    - Cannot allow schema drift at all cost because it will break all the down stream applications.
+- ```python
+        ColumnValues "rating" >= 0,
+        ColumnValues "rating_count" >= 0,
+        ColumnValues "discounted_price" >= 0,
+        ColumnValues "actual_price" >= 0,
+        ColumnValues "discount_percentage" >= 0,
+    ```
+    - It makes sure that ```rating, rating_count, discounted_price, actual_price, discount_percentage``` columns does not have any negative data values in them.
+- ```IsUnique "product_id"```
+    - This makes sure that the product_id is unique and prevents data duplication
+
 #### Step 3 : Filter applied
 The filter set in the Event pattern 
 

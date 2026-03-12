@@ -2810,15 +2810,33 @@ DEFAULT_DATA_QUALITY_RULESET = """Rules = [
 ![setting_up_max_concurrency](images/production_grade_glue_version2_dlq_/glue_ETL/setting_up_max_concurrency.png)
 
 - **Issue I faced :**
-    - I accidently used this rule ```ColumnCount == 16,``` instead of this ```ColumnCount = 16,``` 
-    - Because of this my AWS glue ETL pipeline was failing which is to be expected 
-    - The bigger concern for me was this that it was not sending message to DLQ as it should. 
-    - Reason for this happening:
-        - The step function checks for the final job state and not the logs that is the reason the flow in the step function never reaches to the point where it sends the message to DLQ hence no message is found in the DLQ even when the ETL job fails.
-    - Solution 
-        - All you have to do is wrap the code where you are evaluating the data quality rules in try except. This should send message to DLQ in case the ETL pipeline fails.
-        - In order to test it I am deliberately keeping the wrong rule in the section where I have defined all of my data quality rules ```ColumnCount == 16,```.
-
+    - Data quality related validation issue
+        - I accidently used this rule ```ColumnCount == 16,``` instead of this ```ColumnCount = 16,``` 
+        - Because of this my AWS glue ETL pipeline was failing which is to be expected 
+        - The bigger concern for me was this that it was not sending message to DLQ as it should. 
+        - Reason for this happening:
+            - The step function checks for the final job state and not the logs that is the reason the flow in the step function never reaches to the point where it sends the message to DLQ hence no message is found in the DLQ even when the ETL job fails.
+        - Solution 
+            - All you have to do is wrap the code where you are evaluating the data quality rules in try except. This should send message to DLQ in case the ETL pipeline fails.
+            - In order to test it I am deliberately keeping the wrong rule in the section where I have defined all of my data quality rules ```ColumnCount == 16,```.
+    - If you set the max concurrency to 10 of an AWS glue ETL then you may face the issue below
+        - Explaination
+            - 2 files arrive
+            - 2 StepFn executions start
+            - 2 Glue jobs run simultaneously
+            - Bookmark system = SHARED STATE
+            - Long story short you CANNOT run parallel Glue jobs with bookmarks enabled.
+        - Solution I have to set max concurrency to 1
+    - AWS glue ETL hitting its max concurrency limit and throwing errors
+        - I have set the max concurrency of this ETL pipeline to be 1. This means the moment the number of files recieved in S3 exceeds 1 AWS glue ETL will throw errors in case of the current architecture ```S3 → EventBridge → StepFunction → Glue → Silver S3```
+        - Reason:
+            - 40 files arrives in S3 bucket
+            - All trigger the step function and the step function trigger AWS glue ETL parallely but since I have set max parallel process to be 1 it will not allow more than that hence the error.
+            - Hence we can say that this is a throttling control problem.
+        - Solution : 
+            - We have to improve our architecture to this ```S3 → EventBridge → SQS BUFFER → StepFn/Lambda → Glue```
+            - The missing piece in my current architecture was Buffering + Controlled Dispatch
+    
 
 #### Step 3 : Filter applied
 The filter set in the Event pattern 

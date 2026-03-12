@@ -2819,7 +2819,7 @@ DEFAULT_DATA_QUALITY_RULESET = """Rules = [
         - Solution 
             - All you have to do is wrap the code where you are evaluating the data quality rules in try except. This should send message to DLQ in case the ETL pipeline fails.
             - In order to test it I am deliberately keeping the wrong rule in the section where I have defined all of my data quality rules ```ColumnCount == 16,```.
-    - If you set the max concurrency to 10 of an AWS glue ETL then you may face the issue below
+    - If you set the max concurrency to 10 of an AWS glue ETL then you may face the issue related to ETL bookmark conflict.
         - Explaination
             - 2 files arrive
             - 2 StepFn executions start

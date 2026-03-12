@@ -2806,6 +2806,8 @@ DEFAULT_DATA_QUALITY_RULESET = """Rules = [
     - It makes sure that ```rating, rating_count, discounted_price, actual_price, discount_percentage``` columns does not have any negative data values in them.
 - ```IsUnique "product_id"```
     - This makes sure that the product_id is unique and prevents data duplication
+- I have set AWS glue ETL pipeline to have maximum concurrency of 10 
+![setting_up_max_concurrency](images/production_grade_glue_version2_dlq_/glue_ETL/setting_up_max_concurrency.png)
 
 - **Issue I faced :**
     - I accidently used this rule ```ColumnCount == 16,``` instead of this ```ColumnCount = 16,``` 
@@ -2844,10 +2846,11 @@ Passes params via:
 #### Architecture 
 Current
 ```S3 → EventBridge → StepFunction → Glue → Silver S3```
-Implement this architecture tomorrow 
-```S3 → EventBridge → SQS → StepFn (poller) → Glue (1 at a time) → Silver S3```
 
-### Common Data Quality rules in AWS Visual ETL pipeline
+### Problems with this architecture 
+#### 
+
+### NOTE : Common Data Quality rules in AWS Visual ETL pipeline
 Common DQ rules
 You can use:
 - IsComplete

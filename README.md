@@ -2826,12 +2826,15 @@ DEFAULT_DATA_QUALITY_RULESET = """Rules = [
             - 2 Glue jobs run simultaneously
             - Bookmark system = SHARED STATE
             - Long story short you CANNOT run parallel Glue jobs with bookmarks enabled.
-        - Solution I have to set max concurrency to 1
+        - Solution I have to disable the bookmark for glue ETL pipeline. 
+            - Reason : 
+                - My event passes the which bucket recieved what file to state function which then passes that information to Glue ETL pipeline so my pipeline knows which file to ingest and from where hence bookmark is not needed here 
+                - It was required when instead of implementing file level scanning I would have implemented folder level scanning then it would have been necessary 
     - AWS glue ETL hitting its max concurrency limit and throwing errors
-        - I have set the max concurrency of this ETL pipeline to be 1. This means the moment the number of files recieved in S3 exceeds 1 AWS glue ETL will throw errors in case of the current architecture ```S3 → EventBridge → StepFunction → Glue → Silver S3```
+        - I have set the max concurrency of this ETL pipeline to be 10. This means the moment the number of files recieved in S3 exceeds 10 AWS glue ETL will throw errors in case of the current architecture ```S3 → EventBridge → StepFunction → Glue → Silver S3```
         - Reason:
             - 40 files arrives in S3 bucket
-            - All trigger the step function and the step function trigger AWS glue ETL parallely but since I have set max parallel process to be 1 it will not allow more than that hence the error.
+            - All trigger the step function and the step function trigger AWS glue ETL parallely but since I have set max parallel process to be 10 it will not allow more than that hence the error.
             - Hence we can say that this is a throttling control problem.
         - Solution : 
             - We have to improve our architecture to this ```S3 → EventBridge → SQS BUFFER → StepFn/Lambda → Glue```

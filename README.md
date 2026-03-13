@@ -2839,6 +2839,13 @@ DEFAULT_DATA_QUALITY_RULESET = """Rules = [
         - Solution : 
             - We have to improve our architecture to this ```S3 → EventBridge → SQS BUFFER → StepFn/Lambda → Glue```
             - The missing piece in my current architecture was Buffering + Controlled Dispatch
+            - Correction:
+                - During my reseach I found that Step function can only be triggered only by
+                    - EventBridge
+                    - API
+                    - SDK
+                    - Lambda
+                - So I have to make changes in the architecture accordingly I have to put a lambda function between SQS and Step function ```SQS → Lambda (trigger) → StepFn → Glue```
     
 
 #### Step 3 : Filter applied

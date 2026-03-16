@@ -1507,7 +1507,7 @@ In order to make incremental load pipeline production ready there few things I n
         - If DLQ grows 
             - Transformation bug
 
-### Implementation steps 
+### Implementation steps (Version 1)
 #### Create a DLQ
 - A Dead Letter Queue is a special queue where messages are sent after they fail processing multiple times. It’s a safety net for failed events.
 - Storing events in case of failure is necessary so that we can replay the ingestion pipeline after fixing the errors. Hence making sure that data is not lost silently

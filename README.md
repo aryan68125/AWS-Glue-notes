@@ -931,7 +931,7 @@ Here are some of the custom policies I experimented with and it worked like a ch
 - Idempotancy means exactly once behaviour. We can achieve it using bookmarks.
 - What a bookmark does is it keeps track of the data that has already been ingested by AWS glue visual ETL pipeline and makes sures that the ingestion process only runs for new files only.
 
-### Implementing Incremental Load 
+### Implementing Incremental Load (Version 1)
 - Things that I want to implement here:
     - Implement automatic visual ETL pipeline trigger when a new file arrives in S3 bucket automatically using Lambda function.
     - Then after ingestion again use Lambda funtion to register the data in AWS glue catalog so that we can use Athena to use SQL to query the data in parquet files prsent in the S3 bucket.
@@ -1507,7 +1507,7 @@ In order to make incremental load pipeline production ready there few things I n
         - If DLQ grows 
             - Transformation bug
 
-### Implementation steps (Version 1)
+### Implementation steps (Version 2)
 #### Create a DLQ
 - A Dead Letter Queue is a special queue where messages are sent after they fail processing multiple times. It’s a safety net for failed events.
 - Storing events in case of failure is necessary so that we can replay the ingestion pipeline after fixing the errors. Hence making sure that data is not lost silently
@@ -2025,13 +2025,13 @@ In order to make incremental load pipeline production ready there few things I n
 ![create_event_bridge_6](images/production_grade_glue_implementation/event_bridge_setup/create_event_bridge_6.png)
 
 #### Room for further improvements in this 
-Your current setup works because:
-- You enabled Glue Job Bookmarks
-- You trigger Glue per file
-- You are not doing complex orchestration
-- You are not handling replay or partial failure logic
+Current setup works because:
+- I enabled Glue Job Bookmarks
+- I trigger Glue per file
+- I are not doing complex orchestration
+- I are not handling replay or partial failure logic
 
-Right now your incremental guarantee depends entirely on:
+Right now my incremental guarantee depends entirely on:
 - Glue bookmarks
 
 That works for:
@@ -2061,7 +2061,10 @@ Current implementation have the infrastructure for replayability, but I have NOT
     - Right now DLQ exists but:
     - user replay manually (not production-grade).
 
-## Improvement implementation on current system 
+## Improvement implementation on current system (Version 3)
+- In this version I am going to implement Step function and replace the lambda function that I was using earlier to trigger the ETL pipeline.
+- Reasons : 
+    - Since (Version 2) implementation of this ETL pipeline where I was using lambda function instead of a step function I was not able to reliably detect if the ETL pipeline failed and hence was not able to send the event messages sent by S3 to DLQ reliably in case of a failure.
 ### Implementation 
 #### Step 1 : Source S3 bucket setup
 - Enable events to be sent to EventBridge in your S3 bucket 
@@ -2818,7 +2821,7 @@ DEFAULT_DATA_QUALITY_RULESET = """Rules = [
             - The step function checks for the final job state and not the logs that is the reason the flow in the step function never reaches to the point where it sends the message to DLQ hence no message is found in the DLQ even when the ETL job fails.
         - Solution 
             - All you have to do is wrap the code where you are evaluating the data quality rules in try except. This should send message to DLQ in case the ETL pipeline fails.
-            - In order to test it I am deliberately keeping the wrong rule in the section where I have defined all of my data quality rules ```ColumnCount == 16,```.
+            - In order to test it I am deliberately keeping the wrong rule in the section where I have defined all of my data quality rules ```ColumnCount == 16,```. The correct code looke like this ```ColumnCount == 16,```.
 
 #### Step 3 : Filter applied
 The filter set in the Event pattern 
@@ -2877,7 +2880,7 @@ Current : ```S3 → EventBridge → StepFunction → Glue → Silver S3```
             - Which means I cannot use SQS directly to trigger my step function which is a bummer but I can use Lamdba function to trigger my step function and I know that SQS can trigger Lambda function directly. 
             - So I have to make changes in the architecture accordingly I have to put a lambda function between SQS and Step function ```S3 → EventBridge → SQS BUFFER → Lambda (trigger) → StepFn → Glue → Silver S3```
 
-#### **Implementation :**
+#### **Implementation : (Version 4)**
 - As discussed above I am going to implement this architecture ---> ```S3 → EventBridge → SQS BUFFER → Lambda (trigger) → StepFn → Glue → Silver S3```
 - **First configure you source S3 bucket to use event bridge:**
     - ![send_events_to_event_bridge_s3](images/production_grade_glue_version3_handled_concurrency/s3/send_events_to_event_bridge_s3.png)
@@ -2890,7 +2893,7 @@ Current : ```S3 → EventBridge → StepFunction → Glue → Silver S3```
     - Set the event bridge in a way that it recieves the event message of file arrival directly from S3 bucket and then send that event message to SQS queue named ```FileProcessingQueue.fifo```
 - **SQS for handling file arrival event message from S3 setup:**
     - **STEP 1:**
-        - ![FileProcessingQueue.fifo]!(images/production_grade_glue_version3_handled_concurrency/sqs/FileProcessingQueue.fifo.png)
+        - ![FileProcessingQueue.fifo](images/production_grade_glue_version3_handled_concurrency/sqs/FileProcessingQueue.fifo.png)
         - Set the default visibility time of messages in this ```FileProcessingQueue.fifo``` queue to be 20 minutes. 
         - Don't forget to setup FIFO in this queue if you want your messages to execute in an orderly fashon
         - This is the access policy that I used for this queue 

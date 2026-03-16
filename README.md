@@ -3249,13 +3249,6 @@ Current : ```S3 → EventBridge → StepFunction → Glue → Silver S3```
     - One thing to note make sure that you set max concurrency to 2 for glue ETL pipeline 
     - This is done to save cost 
 
-
-
-
-```>>>>>>>>>>>>>>>>>>>>>```
-
-
-
 ### NOTE : Common Data Quality rules in AWS Visual ETL pipeline
 Common DQ rules
 You can use:

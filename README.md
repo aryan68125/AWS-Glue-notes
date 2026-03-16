@@ -3000,6 +3000,174 @@ Current : ```S3 → EventBridge → StepFunction → Glue → Silver S3```
         ]
     }
     ```
+- **Setup AWS Step function (Orchestrate AWS ETL pipeline)**
+    - ```orchestrate_data_ingestion``` step function will trigger the AWS glue ETL pipeline
+    - ```json
+        {
+        "Comment": "Glue ETL Orchestration with Controlled Concurrency",
+        "StartAt": "ProcessFiles",
+        "States": {
+            "ProcessFiles": {
+            "Type": "Map",
+            "ItemsPath": "$.files",
+            "MaxConcurrency": 1,
+            "Iterator": {
+                "StartAt": "RunGlueJob",
+                "States": {
+                "RunGlueJob": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::glue:startJobRun.sync",
+                    "Parameters": {
+                    "JobName": "ingest_sales_data",
+                    "Arguments": {
+                        "--source_bucket.$": "$.bucket",
+                        "--source_key.$": "$.key"
+                    }
+                    },
+                    "Retry": [
+                    {
+                        "ErrorEquals": [
+                        "Glue.ConcurrentRunsExceededException"
+                        ],
+                        "IntervalSeconds": 60,
+                        "MaxAttempts": 10,
+                        "BackoffRate": 1.5
+                    },
+                    {
+                        "ErrorEquals": [
+                        "States.ALL"
+                        ],
+                        "IntervalSeconds": 30,
+                        "MaxAttempts": 2,
+                        "BackoffRate": 2
+                    }
+                    ],
+                    "Catch": [
+                    {
+                        "ErrorEquals": [
+                        "States.ALL"
+                        ],
+                        "Next": "SendToDLQ"
+                    }
+                    ],
+                    "End": true
+                },
+                "SendToDLQ": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::sqs:sendMessage",
+                    "Parameters": {
+                    "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868976171/sales-ingestion-dlq",
+                    "MessageBody.$": "$"
+                    },
+                    "End": true
+                }
+                }
+            },
+            "End": true
+            }
+        }
+        }
+      ```
+- **Setup AWS Step function (Replay AWS ETL pipeline)**
+    - ```replay_failed_ingestion``` This step function will allow us to re-invoke the ETL pipeline manually in the event where our pipeline failed and even retry failed.
+    - ```json
+        {
+        "Comment": "Replay ETL from DLQ (Fixed Version)",
+        "StartAt": "ReceiveFromDLQ",
+        "States": {
+            "ReceiveFromDLQ": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:sqs:receiveMessage",
+            "Parameters": {
+                "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868976171/sales-ingestion-dlq",
+                "MaxNumberOfMessages": 10
+            },
+            "ResultPath": "$.dlq",
+            "Next": "CheckIfEmpty"
+            },
+            "CheckIfEmpty": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                "Variable": "$.dlq.Messages",
+                "IsPresent": false,
+                "Next": "Success"
+                }
+            ],
+            "Default": "ReplayBatch"
+            },
+            "ReplayBatch": {
+            "Type": "Map",
+            "ItemsPath": "$.dlq.Messages",
+            "MaxConcurrency": 1,
+            "Iterator": {
+                "StartAt": "ExtractPayload",
+                "States": {
+                "ExtractPayload": {
+                    "Type": "Pass",
+                    "Parameters": {
+                    "receiptHandle.$": "$.ReceiptHandle",
+                    "body.$": "States.StringToJson($.Body)"
+                    },
+                    "ResultPath": "$.parsed",
+                    "Next": "ParseCause"
+                },
+                "ParseCause": {
+                    "Type": "Pass",
+                    "Parameters": {
+                    "receiptHandle.$": "$.parsed.receiptHandle",
+                    "cause.$": "States.StringToJson($.parsed.body.Cause)"
+                    },
+                    "ResultPath": "$.payload",
+                    "Next": "RunGlueJob"
+                },
+                "RunGlueJob": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::glue:startJobRun.sync",
+                    "ResultPath": "$.glueResult",
+                    "Parameters": {
+                    "JobName": "ingest_sales_data",
+                    "Arguments": {
+                        "--source_bucket.$": "$.payload.cause.Arguments['--source_bucket']",
+                        "--source_key.$": "$.payload.cause.Arguments['--source_key']"
+                    }
+                    },
+                    "Catch": [
+                    {
+                        "ErrorEquals": [
+                        "States.ALL"
+                        ],
+                        "Next": "FailState"
+                    }
+                    ],
+                    "Next": "DeleteMessage"
+                },
+                "DeleteMessage": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::aws-sdk:sqs:deleteMessage",
+                    "Parameters": {
+                    "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868976171/sales-ingestion-dlq",
+                    "ReceiptHandle.$": "$.payload.receiptHandle"
+                    },
+                    "Next": "SuccessState"
+                },
+                "FailState": {
+                    "Type": "Fail"
+                },
+                "SuccessState": {
+                    "Type": "Succeed"
+                }
+                }
+            },
+            "Next": "Success"
+            },
+            "Success": {
+            "Type": "Succeed"
+            }
+        }
+        }
+      ```
+      
 - **Setup AWS glue ETL pipeline:**
     - Here is the python code for the ETL pipeline 
     ```python

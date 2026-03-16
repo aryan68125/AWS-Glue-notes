@@ -3170,6 +3170,7 @@ Current : ```S3 → EventBridge → StepFunction → Glue → Silver S3```
     # checks Spark-level corruption after parsing ENDS
     # -------- CORRUPTION CHECK -------- #
 
+    #--------- CONVERT THE COLUMNS IN THE CSV FILE TO CORRECT DATA TYPES --------#
     # Script generated for node SQL Query
     SqlQuery61 = '''
     SELECT
@@ -3223,13 +3224,29 @@ Current : ```S3 → EventBridge → StepFunction → Glue → Silver S3```
     except Exception as e:
         print(f"Glue Visual ETL | SQL query execution failed | {e}")
         raise RuntimeError("Failing Glue job explicitly | Failed to execute sql query")
+    #--------- CONVERT THE COLUMNS IN THE CSV FILE TO CORRECT DATA TYPES --------#
 
     # Script generated for node Drop Null Fields
     DropNullFields_node1772431857999 = drop_nulls(glueContext, frame=SQLQuery_node1772431252856, nullStringSet={"", "null"}, nullIntegerSet={-1}, transformation_ctx="DropNullFields_node1772431857999")
 
+    # -------- DEDUPLICATION STEP -------- #
+    # This will check if there exists a row with a duplicate review_id if yes then it will drop one of the row and make sure that the row is unique
+    # Doing this prevents any data duplication 
+    df_clean = DropNullFields_node1772431857999.toDF()
+
+    deduped_df = df_clean.dropDuplicates(["review_id"])
+
+    print("Glue Visual ETL | Before dedup:", df_clean.count())
+    print("Glue Visual ETL | After dedup:", deduped_df.count())
+
+    deduped_dynamic_frame = DynamicFrame.fromDF(
+        deduped_df, glueContext, "deduped_dynamic_frame"
+    )
+    # -------- DEDUPLICATION STEP -------- #
+
     # Script generated for node Silver layer data sink S3
     try:
-        EvaluateDataQuality().process_rows(frame=DropNullFields_node1772431857999, ruleset=DEFAULT_DATA_QUALITY_RULESET, publishing_options={"dataQualityEvaluationContext": "EvaluateDataQuality_node1772428328053", "enableDataQualityResultsPublishing": True}, additional_options={"dataQualityResultsPublishing.strategy": "BEST_EFFORT", "observations.scope": "ALL"})
+        EvaluateDataQuality().process_rows(frame=deduped_dynamic_frame, ruleset=DEFAULT_DATA_QUALITY_RULESET, publishing_options={"dataQualityEvaluationContext": "EvaluateDataQuality_node1772428328053", "enableDataQualityResultsPublishing": True}, additional_options={"dataQualityResultsPublishing.strategy": "BEST_EFFORT", "observations.scope": "ALL"})
     except Exception as e:
         print("Glue Visual ETL | DQ failed:", e)
         raise RuntimeError("Failing Glue job explicitly | Failed to run data quality rules")
@@ -3237,7 +3254,7 @@ Current : ```S3 → EventBridge → StepFunction → Glue → Silver S3```
     SilverlayerdatasinkS3_node1772432020219 = glueContext.getSink(path="s3://data-sink-one/silver_layer/sales_data/", connection_type="s3", updateBehavior="LOG", partitionKeys=["category"], enableUpdateCatalog=True, transformation_ctx="SilverlayerdatasinkS3_node1772432020219")
     SilverlayerdatasinkS3_node1772432020219.setCatalogInfo(catalogDatabase="aws-glue-tutorial-aditya",catalogTableName="silver_table_sales_data")
     SilverlayerdatasinkS3_node1772432020219.setFormat("glueparquet", compression="snappy")
-    SilverlayerdatasinkS3_node1772432020219.writeFrame(DropNullFields_node1772431857999)
+    SilverlayerdatasinkS3_node1772432020219.writeFrame(deduped_dynamic_frame)
     job.commit()
     ```
     - Here is the configuration related to AWS glue ETL pipeline 
@@ -3248,6 +3265,24 @@ Current : ```S3 → EventBridge → StepFunction → Glue → Silver S3```
     - This ETL pipeline will recieve the params from lambda function using which it will know what files to process from the S3 bucket.
     - One thing to note make sure that you set max concurrency to 2 for glue ETL pipeline 
     - This is done to save cost 
+    - This ETL pipeline will also prevent duplicated data in the table from ingestion.
+        - ```python
+            # -------- DEDUPLICATION STEP -------- #
+            # This will check if there exists a row with a duplicate review_id if yes then it will drop one of the row and make sure that the row is unique
+            # Doing this prevents any data duplication 
+            df_clean = DropNullFields_node1772431857999.toDF()
+
+            deduped_df = df_clean.dropDuplicates(["review_id"])
+
+            print("Glue Visual ETL | Before dedup:", df_clean.count())
+            print("Glue Visual ETL | After dedup:", deduped_df.count())
+
+            deduped_dynamic_frame = DynamicFrame.fromDF(
+                deduped_df, glueContext, "deduped_dynamic_frame"
+            )
+            # -------- DEDUPLICATION STEP -------- #
+            ```
+            - This code checks for duplicate ```review_id``` in the rows and will only allow one of them to pass so that it can be ingested.
 
 ### NOTE : Common Data Quality rules in AWS Visual ETL pipeline
 Common DQ rules

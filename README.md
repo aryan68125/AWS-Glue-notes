@@ -2969,36 +2969,36 @@ Current : ```S3 → EventBridge → StepFunction → Glue → Silver S3```
     - When configuring batch size to 5 and set up max concurrency for lambda function to 2 
     - In order for your lambda function to work properly you need to create a new role that has permission like this 
     ```json
-    {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Effect": "Allow",
-                "Action": [
-                    "states:StartExecution"
-                ],
-                "Resource": "arn:aws:states:ap-south-1:406868976171:stateMachine:orchestrate_data_ingestion"
-            },
-            {
-                "Effect": "Allow",
-                "Action": [
-                    "sqs:ReceiveMessage",
-                    "sqs:DeleteMessage",
-                    "sqs:GetQueueAttributes"
-                ],
-                "Resource": "arn:aws:sqs:ap-south-1:406868976171:FileProcessingQueue.fifo"
-            },
-            {
-                "Effect": "Allow",
-                "Action": [
-                    "logs:CreateLogGroup",
-                    "logs:CreateLogStream",
-                    "logs:PutLogEvents"
-                ],
-                "Resource": "*"
-            }
-        ]
-    }
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "states:StartExecution"
+                    ],
+                    "Resource": "arn:aws:states:ap-south-1:406868976171:stateMachine:orchestrate_data_ingestion"
+                },
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "sqs:ReceiveMessage",
+                        "sqs:DeleteMessage",
+                        "sqs:GetQueueAttributes"
+                    ],
+                    "Resource": "arn:aws:sqs:ap-south-1:406868976171:FileProcessingQueue.fifo"
+                },
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "logs:CreateLogGroup",
+                        "logs:CreateLogStream",
+                        "logs:PutLogEvents"
+                    ],
+                    "Resource": "*"
+                }
+            ]
+        }
     ```
 - **Setup AWS Step function (Orchestrate AWS ETL pipeline)**
     - ```orchestrate_data_ingestion``` step function will trigger the AWS glue ETL pipeline
@@ -3068,8 +3068,66 @@ Current : ```S3 → EventBridge → StepFunction → Glue → Silver S3```
         }
         }
       ```
+- **Setup DLQ**
+    - This DLQ will be used by the step function that is responsible for replaying ETL pipeline.
+    - This DLQ saves the event message sent from source s3 in the event when the ETL fails to ingest a particular file.
+    - ![DLQ](images/production_grade_glue_version3_handled_concurrency/sqs/DLQ.png)
+    - This is the sqs policy I used 
+    ```json
+    {
+        "Version": "2012-10-17",
+        "Id": "__default_policy_ID",
+        "Statement": [
+            {
+            "Sid": "__owner_statement",
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::406868976171:root"
+            },
+            "Action": "SQS:*",
+            "Resource": "arn:aws:sqs:ap-south-1:406868976171:sales-ingestion-dlq"
+            },
+            {
+            "Sid": "AllowEventBridgeToSendMessage",
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "events.amazonaws.com"
+            },
+            "Action": "sqs:SendMessage",
+            "Resource": "arn:aws:sqs:ap-south-1:406868976171:sales-ingestion-dlq",
+            "Condition": {
+                "ArnEquals": {
+                "aws:SourceArn": "arn:aws:events:ap-south-1:406868976171:rule/ActivateLambdaFuncEventBridgeRules"
+                }
+            }
+            },
+            {
+            "Sid": "AWSEvents_ActivateLambdaFuncEventBridgeRules_dlq_41c9320f-edd2-4fde-ad71-2985e68b1d7c",
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "events.amazonaws.com"
+            },
+            "Action": "sqs:SendMessage",
+            "Resource": "arn:aws:sqs:ap-south-1:406868976171:sales-ingestion-dlq",
+            "Condition": {
+                "ArnEquals": {
+                "aws:SourceArn": "arn:aws:events:ap-south-1:406868976171:rule/ActivateLambdaFuncEventBridgeRules"
+                }
+            }
+            }
+        ]
+    }
+    ```
 - **Setup AWS Step function (Replay AWS ETL pipeline)**
     - ```replay_failed_ingestion``` This step function will allow us to re-invoke the ETL pipeline manually in the event where our pipeline failed and even retry failed.
+    - SOP is that :
+        - suppose you recieve a corrupted csv file 
+        - you pipeline retries 3 times and then fails 
+        - you get a mail telling you that the ETL failed to ingest this file along with the file name 
+        - The event message from S3 gets stored in the DLQ
+        - after fixing the issue I can simple use this state function to manualy run the ETL pipeline 
+        - since this state function reads the event message from the DLQ the ETL knows which file to reprocess.
+        - This is why this replay step function is essential.
     - ```json
         {
         "Comment": "Replay ETL from DLQ (Fixed Version)",

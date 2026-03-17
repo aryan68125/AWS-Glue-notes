@@ -2890,6 +2890,23 @@ Current : ```S3 → EventBridge → StepFunction → Glue → Silver S3```
     - ![event_bridge_diagram_2](images/production_grade_glue_version3_handled_concurrency/eventBridge/event_bridge_diagram_2.png)
     - ![event_bridge_diagram_2_permissions](images/production_grade_glue_version3_handled_concurrency/eventBridge/event_bridge_diagram_2_permissions.png)
     - ![event_bridge_diagram_2_DLQ](images/production_grade_glue_version3_handled_concurrency/eventBridge/event_bridge_diagram_2_DLQ.png)
+    - Here is the event pattern filter.
+        - ```json
+            {
+            "source": ["aws.s3"],
+            "detail-type": ["Object Created"],
+            "detail": {
+                "bucket": {
+                "name": ["aws-glue-s3-bucket-one"]
+                },
+                "object": {
+                "key": [{
+                    "prefix": "raw_data/sales_data/"
+                }]
+                }
+            }
+            }
+            ```
     - Set the event bridge in a way that it recieves the event message of file arrival directly from S3 bucket and then send that event message to SQS queue named ```FileProcessingQueue.fifo```
 - **SQS for handling file arrival event message from S3 setup:**
     - **STEP 1:**
@@ -3531,18 +3548,20 @@ I should also add:
 - anomaly detection
 - statistical drift checks
 
-
+## >>>>>>>>>>>>>>>>>>>>>
 
 
 
 
 # TODO tomorrows task START FROM HERE
+```bash
 StepFn
    ↓
 Check DynamoDB
    ↓
 IF processed → skip
 IF not → run Glue → mark DONE
+```
 
 This gives:
 - idempotency

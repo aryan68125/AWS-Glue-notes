@@ -3539,19 +3539,28 @@ You can use:
 - MatchesRegex
 - ReferentialIntegrity
 
-Proposed : Other better validation ways (prod)
+## Implementation : (Version 5) (Pending to be implemented)
+- In this phase of implementation I am going to implement dynamo db to keep track of files that have been ingested successfully or failed or in progress
 
-I should also add:
-- schema enforcement
-- row-count checks
-- duplicate detection
-- anomaly detection
-- statistical drift checks
-
-## >>>>>>>>>>>>>>>>>>>>>
-
-
-
+### Theory : Implementation (Version 5)
+#### DynamoDB vs RDS
+-  **DynamoDB (NoSQL, key-value)**
+    - Schema: flexible (no rigid schema)
+    - Access pattern: key-based lookups (O(1))
+    - Scaling: automatic, virtually unlimited
+    - Concurrency: built-in atomic conditional writes
+    - Latency: single-digit milliseconds
+    - Operations: simple (get/put/update)
+    - Cost model: per request
+    - atomic conditional writes at scale
+- **RDS (Relational DB)**
+    - Schema: strict (tables, joins, constraints)
+    - Access pattern: complex queries, joins
+    - Scaling: vertical (or complex horizontal)
+    - Concurrency: transactional (ACID), but heavier
+    - Latency: higher than DynamoDB
+    - Operations: SQL, joins, aggregations
+    - Cost model: instance-based (always on)
 
 # TODO tomorrows task START FROM HERE
 ```bash

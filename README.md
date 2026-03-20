@@ -3526,6 +3526,31 @@ Current : ```S3 → EventBridge → StepFunction → Glue → Silver S3```
             # -------- DEDUPLICATION STEP -------- #
             ```
             - This code checks for duplicate ```review_id``` in the rows and will only allow one of them to pass so that it can be ingested.
+### There are still gaps in this Implementation : (Version 4)
+#### No true idempotency 
+- In current implementation I will get duplicates
+- Meaning the same file can be processed multiple times
+- Real problem is :
+    - If glue has to run twice to process the same file that has already been ingested then its not only a waste of compute but also waste of money in AWS
+    - Step function runs twice again its a waste of compute and money specially when the file has already been ingested.
+    - DLQ noise increases
+    - Observability becomes messy
+#### Solution : 
+- Create a file processing repository (DynamoDB)
+- Keys:
+    - ```bash 
+        PK: file_key (S3 object key)
+    ```
+- Attributes:
+    - ```bash
+        status: IN_PROGRESS | SUCCESS | FAILED
+        row_count
+        error_message
+        event_payload
+        updated_at
+      ```
+#### Benefits :
+- 
 
 ### NOTE : Common Data Quality rules in AWS Visual ETL pipeline
 Common DQ rules

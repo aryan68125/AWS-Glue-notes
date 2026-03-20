@@ -3652,6 +3652,8 @@ You can use:
 This is the command used to query the data present in the dynamoDB
 ```aws dynamodb scan --table-name file_processing_registry```
 
+TODO : write the steps and update the code for the update architecture on how the dynamo db is used to track the files that have been ingested or in progressed or have failed 
+
 # TODO tomorrows task START FROM HERE
 ```bash
 StepFn

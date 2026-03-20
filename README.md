@@ -3549,8 +3549,6 @@ Current : ```S3 → EventBridge → StepFunction → Glue → Silver S3```
         event_payload
         updated_at
       ```
-#### Benefits :
-- 
 
 ### NOTE : Common Data Quality rules in AWS Visual ETL pipeline
 Common DQ rules
@@ -3589,23 +3587,55 @@ You can use:
 
 ### Proposed architecture 
 ```bash
-S3 Landing
-    ↓
-EventBridge
-    ↓
-SQS Queue
-    ↓
-Lambda Ingestion Controller
-    ↓
-DynamoDB Metadata
-    ↓
-Glue ETL
-    ↓
-S3 Silver
-    ↓
-Glue Catalog
-    ↓
-Athena
+                ┌─────────────────────────┐
+                │   S3 Source Bucket      │
+                │   (CSV Files)           │
+                └────────────┬────────────┘
+                             │
+                             ▼
+                ┌─────────────────────────┐
+                │      EventBridge        │
+                └────────────┬────────────┘
+                             │
+                             ▼
+                ┌─────────────────────────┐
+                │   SQS BUFFER (FIFO)     │
+                │ FileProcessingQueue     │
+                └────────────┬────────────┘
+                             │
+                             ▼
+                ┌─────────────────────────┐
+                │        Lambda           │
+                │ (Trigger StepFn)        │
+                └────────────┬────────────┘
+                             │
+                ┌────────────▼────────────┐
+                │     DynamoDB (NEW)      │
+                │  File Processing Table  │
+                │-------------------------│
+                │ PK: file_key            │
+                │ status                  │
+                │ row_count               │
+                │ error_message           │
+                │ event_payload           │
+                │ retry_count             │
+                └────────────┬────────────┘
+                             │
+                             ▼
+                ┌─────────────────────────┐
+                │      Step Function      │
+                │ orchestrate_ingestion   │
+                └────────────┬────────────┘
+                             │
+                             ▼
+                ┌─────────────────────────┐
+                │        Glue ETL         │
+                └────────────┬────────────┘
+                             │
+                             ▼
+                ┌─────────────────────────┐
+                │     Silver S3 Layer     │
+                └─────────────────────────┘
 ```
 
 

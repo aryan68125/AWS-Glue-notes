@@ -3638,6 +3638,19 @@ You can use:
                 └─────────────────────────┘
 ```
 
+### Implementation phase for version 5
+#### Step function (orchestrate_data_ingestion)
+- This step function is responsible for invoking and monitoring the AWS glue ETL pipeline and send the failed ingestion file related events to DLQ so that the data engineer team can debug and later use the same event to re-ingest the file.
+- What was missing in the previous version 4 implementation
+    - No SUCCESS update to DynamoDB
+    - No FAILED update to DynamoDB
+    - No file_key propagation
+    - No structured error capture
+- This version update brings 
+    - ```Step Function = orchestrator + state updater```
+
+This is the command used to query the data present in the dynamoDB
+```aws dynamodb scan --table-name file_processing_registry```
 
 # TODO tomorrows task START FROM HERE
 ```bash

@@ -2940,46 +2940,46 @@ Current : ```S3 → EventBridge → StepFunction → Glue → Silver S3```
     - Why this is needed because SQS cannot directly trigger Step function it can only trigger a lambda function 
     - Here is the lambda function code that I am using 
     ```python
-        import json
-        import boto3
-        import uuid
-        from datetime import datetime, timezone, timedelta
+    import json
+    import boto3
+    import uuid
+    from datetime import datetime, timezone, timedelta
 
-        sf = boto3.client("stepfunctions")
+    sf = boto3.client("stepfunctions")
 
-        STATE_MACHINE_ARN = "arn:aws:states:ap-south-1:406868976171:stateMachine:orchestrate_data_ingestion"
+    STATE_MACHINE_ARN = "arn:aws:states:ap-south-1:406868976171:stateMachine:orchestrate_data_ingestion"
 
-        def lambda_handler(event, context):
+    def lambda_handler(event, context):
 
-            execution_id = str(uuid.uuid4())[:8]
+        execution_id = str(uuid.uuid4())[:8]
 
-            IST = timezone(timedelta(hours=5, minutes=30))
-            timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S %Z")
+        IST = timezone(timedelta(hours=5, minutes=30))
+        timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S %Z")
 
-            print(f"\n===== Lambda Invocation START =====")
-            print(f"ExecutionID: {execution_id}")
-            print(f"Timestamp: {timestamp}")
-            print("Full Event From SQS:", json.dumps(event))
-            print("===================================\n")
+        print(f"\n===== Lambda Invocation START =====")
+        print(f"ExecutionID: {execution_id}")
+        print(f"Timestamp: {timestamp}")
+        print("Full Event From SQS:", json.dumps(event))
+        print("===================================\n")
 
-            files = []
+        files = []
 
-            for record in event["Records"]:
-                body = json.loads(record["body"])
+        for record in event["Records"]:
+            body = json.loads(record["body"])
 
-                files.append({
-                    "bucket": body["detail"]["bucket"]["name"],
-                    "key": body["detail"]["object"]["key"]
-                })
+            files.append({
+                "bucket": body["detail"]["bucket"]["name"],
+                "key": body["detail"]["object"]["key"]
+            })
 
-            print("Files collected:", files)
+        print("Files collected:", files)
 
-            sf.start_execution(
-                stateMachineArn=STATE_MACHINE_ARN,
-                input=json.dumps({"files": files})
-            )
+        sf.start_execution(
+            stateMachineArn=STATE_MACHINE_ARN,
+            input=json.dumps({"files": files})
+        )
 
-            return {"status": "ok"}
+        return {"status": "ok"}
     ```
     - Here is the lambda function trigger configuration
     ![lambda_function_trigger_conf](images/production_grade_glue_version3_handled_concurrency/lambda_function/lambda_function_trigger_conf.png)

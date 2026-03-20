@@ -3477,7 +3477,7 @@ Current : ```S3 → EventBridge → StepFunction → Glue → Silver S3```
     # Doing this prevents any data duplication 
     df_clean = DropNullFields_node1772431857999.toDF()
 
-    deduped_df = df_clean.dropDuplicates(["review_id"])
+    deduped_df = df_clean.dropDuplicates()
 
     print("Glue Visual ETL | Before dedup:", df_clean.count())
     print("Glue Visual ETL | After dedup:", deduped_df.count())
@@ -3561,6 +3561,28 @@ You can use:
     - Latency: higher than DynamoDB
     - Operations: SQL, joins, aggregations
     - Cost model: instance-based (always on)
+
+### Proposed architecture 
+```bash
+S3 Landing
+    ↓
+EventBridge
+    ↓
+SQS Queue
+    ↓
+Lambda Ingestion Controller
+    ↓
+DynamoDB Metadata
+    ↓
+Glue ETL
+    ↓
+S3 Silver
+    ↓
+Glue Catalog
+    ↓
+Athena
+```
+
 
 # TODO tomorrows task START FROM HERE
 ```bash

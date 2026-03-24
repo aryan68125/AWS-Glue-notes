@@ -4589,27 +4589,24 @@ job.commit()
 - After the setup you will see that lamdba function added these in dynamoDb
     - ![dynamo_db_6](images/production_grade_glue_version5_dynamo_db/dynamo_db/dynamo_db_6.png)
     - As you can see that the files are being tracked successfully.
-#### Things to remember
-- 
-
-
-
-
-
-
-
-
-
-
-
-
-- Things to rememeber when creating a table in dynamo db 
+- Things to remember :
     - Partition key should be set to ```file_key```
+    - This is the command used to query the data present in the dynamoDB ```aws dynamodb scan --table-name file_processing_registry```
+### Issues I faced during Implementation phase for version 5
+TODO refer to chat https://claude.ai/chat/04ebe7b7-632d-4a52-94eb-5e66fb0d933b
 
-This is the command used to query the data present in the dynamoDB
-```aws dynamodb scan --table-name file_processing_registry```
 
-TODO : write the steps and update the code for the update architecture on how the dynamo db is used to track the files that have been ingested or in progressed or have failed 
+
+
+
+
+
+
+
+
+
+
+
 
 # TODO tomorrows task START FROM HERE
 ```bash

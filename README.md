@@ -3584,7 +3584,6 @@ You can use:
     - Latency: higher than DynamoDB
     - Operations: SQL, joins, aggregations
     - Cost model: instance-based (always on)
-
 ### Proposed architecture 
 ```bash
                 ┌─────────────────────────┐
@@ -3639,15 +3638,970 @@ You can use:
 ```
 
 ### Implementation phase for version 5
+#### S3 bucket related settings 
+- Set the setting related to sending the events to the event bridge in this source S3 bucket like as shown below 
+![source_bucket](images/production_grade_glue_version5_dynamo_db/S3/source_bucket.png)
+    
+#### SQS (sales-ingestion-dlq)
+- Access policy for this sqs ```sales-ingestion-dlq```
+    - ```json
+        {
+        "Version": "2012-10-17",
+        "Id": "__default_policy_ID",
+        "Statement": [
+            {
+            "Sid": "__owner_statement",
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::406868976171:root"
+            },
+            "Action": "SQS:*",
+            "Resource": "arn:aws:sqs:ap-south-1:406868976171:sales-ingestion-dlq"
+            },
+            {
+            "Sid": "AllowEventBridgeToSendMessage",
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "events.amazonaws.com"
+            },
+            "Action": "sqs:SendMessage",
+            "Resource": "arn:aws:sqs:ap-south-1:406868976171:sales-ingestion-dlq",
+            "Condition": {
+                "ArnEquals": {
+                "aws:SourceArn": "arn:aws:events:ap-south-1:406868976171:rule/ActivateLambdaFuncEventBridgeRules"
+                }
+            }
+            },
+            {
+            "Sid": "AWSEvents_ActivateLambdaFuncEventBridgeRules_dlq_41c9320f-edd2-4fde-ad71-2985e68b1d7c",
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "events.amazonaws.com"
+            },
+            "Action": "sqs:SendMessage",
+            "Resource": "arn:aws:sqs:ap-south-1:406868976171:sales-ingestion-dlq",
+            "Condition": {
+                "ArnEquals": {
+                "aws:SourceArn": "arn:aws:events:ap-south-1:406868976171:rule/ActivateLambdaFuncEventBridgeRules"
+                }
+            }
+            }
+        ]
+        }
+      ```
+- ![sales-ingestion-dlq_1](images/production_grade_glue_version5_dynamo_db/SQS/sales-ingestion-dlq_1.png)
+- ![sales-ingestion-dlq_2](images/production_grade_glue_version5_dynamo_db/SQS/sales-ingestion-dlq_2.png)
+- ![sales-ingestion-dlq_3](images/production_grade_glue_version5_dynamo_db/SQS/sales-ingestion-dlq_3.png)
+- This sqs queue stores the event messages in a queue in the event of ETL pipeline failure so that we can use ```replay_failed_ingestion``` step function to manually replay all the events and ingest the data from the files that have failed to be ingested due to errors after resolving the cause for error.
+
+#### Step function (replay_failed_ingestion)
+- Attach this permissions to IAM role 
+    - ![replay_failed_ingestion_2](images/production_grade_glue_version5_dynamo_db/step_functions/replay_failed_ingestion_2.png)
+    - Let AWS create IAM role for your step functions and then add more permissions to this IAM role as needed by your use case.
+    - Attach one AWS managed policy called ```AmazonSQSFullAccess```
+    - Attach one custom policy for dynamoDB related permissions named ```DynamoDBStepFunctionAccessPolicy```
+        - ```json
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "DynamoDBStepFunctionAccessPolicy",
+                        "Effect": "Allow",
+                        "Action": [
+                            "dynamodb:UpdateItem",
+                            "dynamodb:GetItem"
+                        ],
+                        "Resource": "arn:aws:dynamodb:ap-south-1:406868976171:table/file_processing_registry"
+                    }
+                ]
+            }
+          ```
+```json
+{
+  "Comment": "Replay ETL from DLQ (Fixed - State Preservation + Safe Errors)",
+  "StartAt": "ReceiveFromDLQ",
+  "States": {
+    "ReceiveFromDLQ": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:sqs:receiveMessage",
+      "Parameters": {
+        "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868976171/sales-ingestion-dlq",
+        "MaxNumberOfMessages": 10
+      },
+      "ResultPath": "$.dlq",
+      "Next": "CheckIfEmpty"
+    },
+    "CheckIfEmpty": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.dlq.Messages",
+          "IsPresent": false,
+          "Next": "Success"
+        }
+      ],
+      "Default": "ReplayBatch"
+    },
+    "ReplayBatch": {
+      "Type": "Map",
+      "ItemsPath": "$.dlq.Messages",
+      "MaxConcurrency": 2,
+      "Iterator": {
+        "StartAt": "ExtractPayload",
+        "States": {
+          "ExtractPayload": {
+            "Type": "Pass",
+            "Parameters": {
+              "receiptHandle.$": "$.ReceiptHandle",
+              "body.$": "States.StringToJson($.Body)"
+            },
+            "ResultPath": "$.parsed",
+            "Next": "CheckRetry"
+          },
+          "CheckRetry": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:getItem",
+            "Parameters": {
+              "TableName": "file_processing_registry",
+              "Key": {
+                "file_key": {
+                  "S.$": "$.parsed.body.file_key"
+                }
+              }
+            },
+            "ResultPath": "$.ddb",
+            "Next": "EvaluateRetry"
+          },
+          "EvaluateRetry": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Variable": "$.ddb.Item.retry_count.N",
+                "NumericLessThan": 3,
+                "Next": "IncrementRetry"
+              }
+            ],
+            "Default": "SkipReplay"
+          },
+          "IncrementRetry": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Parameters": {
+              "TableName": "file_processing_registry",
+              "Key": {
+                "file_key": {
+                  "S.$": "$.parsed.body.file_key"
+                }
+              },
+              "UpdateExpression": "ADD retry_count :inc",
+              "ExpressionAttributeValues": {
+                ":inc": {
+                  "N": "1"
+                }
+              }
+            },
+            "Next": "RunGlueJob"
+          },
+          "RunGlueJob": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::glue:startJobRun.sync",
+            "ResultPath": "$.glueResult",
+            "Parameters": {
+              "JobName": "ingest_sales_data",
+              "Arguments": {
+                "--source_bucket.$": "$.parsed.body.bucket",
+                "--source_key.$": "$.parsed.body.key"
+              }
+            },
+            "Catch": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "ResultPath": "$.error",
+                "Next": "UpdateFailure"
+              }
+            ],
+            "Next": "UpdateSuccess"
+          },
+          "UpdateSuccess": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Parameters": {
+              "TableName": "file_processing_registry",
+              "Key": {
+                "file_key": {
+                  "S.$": "$.parsed.body.file_key"
+                }
+              },
+              "UpdateExpression": "SET #s = :s, updated_at = :t",
+              "ExpressionAttributeNames": {
+                "#s": "status"
+              },
+              "ExpressionAttributeValues": {
+                ":s": {
+                  "S": "SUCCESS"
+                },
+                ":t": {
+                  "S.$": "$$.State.EnteredTime"
+                }
+              }
+            },
+            "Next": "DeleteMessage"
+          },
+          "UpdateFailure": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Parameters": {
+              "TableName": "file_processing_registry",
+              "Key": {
+                "file_key": {
+                  "S.$": "$.parsed.body.file_key"
+                }
+              },
+              "UpdateExpression": "SET #s = :s, error_message = :e, updated_at = :t",
+              "ExpressionAttributeNames": {
+                "#s": "status"
+              },
+              "ExpressionAttributeValues": {
+                ":s": {
+                  "S": "FAILED"
+                },
+                ":e": {
+                  "S.$": "States.JsonToString($.error)"
+                },
+                ":t": {
+                  "S.$": "$$.State.EnteredTime"
+                }
+              }
+            },
+            "Next": "DeleteMessage"
+          },
+          "SkipReplay": {
+            "Type": "Pass",
+            "Next": "DeleteMessage"
+          },
+          "DeleteMessage": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:sqs:deleteMessage",
+            "Parameters": {
+              "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868976171/sales-ingestion-dlq",
+              "ReceiptHandle.$": "$.parsed.receiptHandle"
+            },
+            "End": true
+          }
+        }
+      },
+      "Next": "Success"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}
+```
+- ![replay_failed_ingestion_flow](images/production_grade_glue_version5_dynamo_db/step_functions/replay_failed_ingestion_flow.svg)
+- **ReceiveFromDLQ** — The Step Function opens the sales-ingestion-dlq and pulls up to 10 messages at once. These are messages that were written there by orchestrate_data_ingestion when Glue previously failed.
+- **CheckIfEmpty** — Checks if the Messages key is present in the SQS response. If the queue was empty, SQS returns no Messages key at all (not an empty array — it literally omits the key). The Choice state uses IsPresent: false to detect this and short-circuits straight to Success — nothing to do.
+- **Map (ReplayBatch)** — For each message in the batch, it spawns a parallel iterator with MaxConcurrency: 2, meaning it processes at most 2 failed files at the same time.
+- **ExtractPayload** — A Pass state that uses States.StringToJson to parse the raw SQS message body (which is a string) into a usable JSON object. It also pulls out the ReceiptHandle, which is the SQS token you need later to delete the message.
+- **CheckRetry** — Looks up the file's record in file_processing_registry DynamoDB using file_key as the key. It retrieves the current retry_count.
+- **EvaluateRetry** — Checks if retry_count < 3. This is your poison message guard. If a file has already been retried 3 or more times and keeps failing, it's considered a poison message — likely corrupt data or a permanent schema issue. You don't want to keep hammering Glue with it. So retry_count >= 3 routes to SkipReplay.
+- **IncrementRetry** — Before attempting Glue, it immediately increments retry_count by 1 in DynamoDB. This is important — it increments before running Glue, not after. That way if Glue hangs, crashes mid-run, or the Step Function itself dies, the counter is already updated. You won't accidentally lose track of how many times you've tried.
+- **RunGlueJob** — Starts the actual Glue ETL job with .sync, meaning it waits for Glue to fully finish before moving on. It passes source_bucket and source_key extracted from the DLQ message body.
+- **UpdateSuccess / UpdateFailure** — Depending on whether Glue succeeded or failed, it writes the result back to DynamoDB. On success it sets status = SUCCESS. On failure it sets status = FAILED and stores the error string from $.error via States.JsonToString.
+- **SkipReplay** — Just a Pass state that does nothing. The poison message flows straight through to DeleteMessage.
+- **DeleteMessage** — This always runs, regardless of success, failure, or skip. It deletes the message from the DLQ using the ReceiptHandle. This is correct behaviour — even if Glue failed again, you still remove it from the DLQ because you've already recorded the failure in DynamoDB. If you left it in the DLQ, the next replay run would just pick it up again infinitely.
+
+#### SQS (FileProcessingQueue.fifo)
+- ```json
+    {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+        "Sid": "AllowEventBridgeToSend",
+        "Effect": "Allow",
+        "Principal": {
+            "Service": "events.amazonaws.com"
+        },
+        "Action": "sqs:SendMessage",
+        "Resource": "arn:aws:sqs:ap-south-1:406868976171:FileProcessingQueue",
+        "Condition": {
+            "ArnEquals": {
+            "aws:SourceArn": "arn:aws:events:ap-south-1:406868976171:rule/ActivateLambdaFuncEventBridgeRules"
+            }
+        }
+        }
+    ]
+    }
+  ```
+- ![FileProcessingQueue.fifo_1](images/production_grade_glue_version5_dynamo_db/SQS/FileProcessingQueue.fifo_1.png)
+- ![FileProcessingQueue.fifo_2](images/production_grade_glue_version5_dynamo_db/SQS/FileProcessingQueue.fifo_2.png)
+- ![FileProcessingQueue.fifo_3](images/production_grade_glue_version5_dynamo_db/SQS/FileProcessingQueue.fifo_3.png)
+- This is another SQS queue that is used in this architecture so as to tackle the backpressure 
+- Backpressure is what happens when a downstream system cannot consume data as fast as an upstream system is producing it, and that slowness propagates back upstream to slow down or pause the producer.
+- The word comes from fluid dynamics — imagine water flowing through pipes of different diameters. If a wide pipe feeds into a narrow pipe, water pressure builds up at the junction. The narrow pipe is creating backpressure against the flow. The same concept applies to data systems.
+- A concrete example from my own pipeline makes this clearest. Imagine your S3 bucket starts receiving 500 CSV files per minute from an upstream application. Your Glue ETL job can only process 2 files concurrently due to your MaxConcurrency: 2 setting. Without any buffering, those 500 events would all hit your Step Function simultaneously, Glue would reject most of them with ConcurrentRunsExceededException, and you'd have a cascade of failures.
+- This is exactly why I added SQS between EventBridge and Lambda. SQS is acting as your backpressure mechanism. The 500 events land safely in the queue, and Lambda only pulls from it at a controlled rate using your batch size of 5 and max concurrency of 2. The queue absorbs the burst — it holds the excess load and releases it at the pace the downstream system can handle. The upstream system (S3/EventBridge) never needs to know that Glue is slow.
+- Without backpressure handling, systems fail in two common ways. The first is the fast producer overwhelming the slow consumer — the consumer crashes under load or starts dropping data silently. The second is unbounded memory growth — if the consumer is slow and the producer keeps pushing, the buffer between them grows until the system runs out of memory.
+- In data engineering specifically you see backpressure handled in a few different ways. Queues like SQS, Kafka, and RabbitMQ are the most common approach — they decouple the producer and consumer so each can run at its own pace. Rate limiting at the producer side is another approach, where the producer is told to slow down explicitly. Streaming frameworks like Apache Flink and Spark Structured Streaming have backpressure built in natively — if a downstream operator is slow, Flink automatically reduces the rate at which the source reads new records.
+#### Create an IAM role for lambda function (TriggerStepFunctionRoleForLambdaFunc)
+- Create an IAM role named ```TriggerStepFunctionRoleForLambdaFunc``` for lambda function with appropriate permissions (Policies)
+- Permissions added to this role is 
+    - ```AllowLambdaToAccessSQSAndStepFunction```
+        - ```json
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": [
+                            "states:StartExecution"
+                        ],
+                        "Resource": "arn:aws:states:ap-south-1:406868976171:stateMachine:orchestrate_data_ingestion"
+                    },
+                    {
+                        "Effect": "Allow",
+                        "Action": [
+                            "sqs:ReceiveMessage",
+                            "sqs:DeleteMessage",
+                            "sqs:GetQueueAttributes"
+                        ],
+                        "Resource": "arn:aws:sqs:ap-south-1:406868976171:FileProcessingQueue.fifo"
+                    },
+                    {
+                        "Effect": "Allow",
+                        "Action": [
+                            "logs:CreateLogGroup",
+                            "logs:CreateLogStream",
+                            "logs:PutLogEvents"
+                        ],
+                        "Resource": "*"
+                    }
+                ]
+            }
+          ```
+    - ```DynamoDbAccessPolicyForLambdaFunction```
+        - ```json
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "DynamoDbAccessPolicyForLambdaFunction",
+                        "Effect": "Allow",
+                        "Action": [
+                            "dynamodb:PutItem",
+                            "dynamodb:GetItem",
+                            "dynamodb:UpdateItem"
+                        ],
+                        "Resource": "arn:aws:dynamodb:ap-south-1:406868976171:table/file_processing_registry"
+                    }
+                ]
+            }
+          ```
+#### Lambda function (StartStateFunction)
+- ```python
+    import json
+    import boto3
+    import uuid
+    from datetime import datetime, timezone, timedelta
+
+    sf = boto3.client("stepfunctions")
+    dynamodb = boto3.client("dynamodb")
+
+    STATE_MACHINE_ARN = "arn:aws:states:ap-south-1:406868976171:stateMachine:orchestrate_data_ingestion"
+    TABLE_NAME = "file_processing_registry"
+
+    def lambda_handler(event, context):
+
+        execution_id = str(uuid.uuid4())[:8]
+
+        IST = timezone(timedelta(hours=5, minutes=30))
+        timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S %Z")
+
+        print(f"\n===== Lambda Invocation START =====")
+        print(f"ExecutionID: {execution_id}")
+        print(f"Timestamp: {timestamp}")
+        print("Full Event From SQS:", json.dumps(event))
+        print("===================================\n")
+
+        files = []
+
+        for record in event["Records"]:
+            body = json.loads(record["body"])
+
+            bucket = body["detail"]["bucket"]["name"]
+            key = body["detail"]["object"]["key"]
+
+            file_key = f"s3://{bucket}/{key}"
+
+            try:
+                # Idempotency check (CRITICAL)
+                dynamodb.put_item(
+                    TableName=TABLE_NAME,
+                    Item={
+                        "file_key": {"S": file_key},
+                        "status": {"S": "IN_PROGRESS"},
+                        "retry_count": {"N": "0"},
+                        "created_at": {"S": timestamp}
+                    },
+                    ConditionExpression="attribute_not_exists(file_key)"
+                )
+
+                # Only add if it's NOT duplicate
+                files.append({
+                    "bucket": bucket,
+                    "key": key,
+                    "file_key": file_key
+                })
+
+                print(f"Accepted file: {file_key}")
+
+            except dynamodb.exceptions.ConditionalCheckFailedException:
+                print(f"Duplicate skipped: {file_key}")
+
+        print("Files to process:", files)
+
+        # Only trigger StepFn if there are valid files
+        if files:
+            sf.start_execution(
+                stateMachineArn=STATE_MACHINE_ARN,
+                input=json.dumps({"files": files})
+            )
+            print("Step Function triggered")
+        else:
+            print("No new files to process")
+
+        return {"status": "ok"}
+    ```
+- ![StartStateFunction_1](images/production_grade_glue_version5_dynamo_db/lambda_function/StartStateFunction_1.png)
+- ![lambda_startstatefn_flow](images/production_grade_glue_version5_dynamo_db/lambda_function/lambda_startstatefn_flow.svg)
+- What triggers it?
+    - SQS triggers this Lambda automatically whenever messages arrive in FileProcessingQueue.fifo. Each invocation receives a batch of up to 5 messages (your configured batch size), delivered as ```event["Records"]```.
+- Section 1 : Setup and logging
+    - ```python
+        execution_id = str(uuid.uuid4())[:8]
+        timestamp = datetime.now(IST).strftime(...)
+      ```
+    - At the start, it generates a short random ```execution_id``` (first 8 chars of a UUID) and captures the current IST timestamp. These are purely for logging — they let you correlate CloudWatch log lines back to a specific Lambda invocation when debugging. Nothing is done with ```execution_id``` beyond printing it.
+- Section 2 : Parse each SQS record
+    - ```python
+        for record in event["Records"]:
+            body = json.loads(record["body"])
+            bucket = body["detail"]["bucket"]["name"]
+            key = body["detail"]["object"]["key"]
+            file_key = f"s3://{bucket}/{key}"
+      ```
+    - Each SQS message body is a JSON string containing the original EventBridge event from S3. The Lambda parses it and extracts three things: the bucket name, the object key (file path inside the bucket), and then constructs ```file_key``` by combining them into a full S3 URI like ```s3://aws-glue-s3-bucket-one/raw_data/sales_data/sales_data_1.csv```. This file_key is what gets used as the primary key in DynamoDB.
+- Section 3 : The idempotency check (the most important part)
+    - ```python
+      dynamodb.put_item(
+            TableName=TABLE_NAME,
+            Item={ "file_key": ..., "status": "IN_PROGRESS", "retry_count": "0", ... },
+            ConditionExpression="attribute_not_exists(file_key)"
+        )
+      ```
+    - This is an atomic conditional write. It says: write this record to DynamoDB, but only if an item with this ```file_key``` does not already exist. DynamoDB evaluates the condition and the write in a single operation — there is no gap between checking and writing that another process could slip through.
+    - If the file is new, the write succeeds, the record is created with ```status = IN_PROGRESS``` and ```retry_count = 0```, and the file gets added to the files list.
+    - If the file was already processed (or is currently being processed), DynamoDB raises ```ConditionalCheckFailedException```. The ```except``` block catches it silently, logs ```"Duplicate skipped"```, and moves on. The file is never added to ```files```.
+- Section 4 : Trigger the Step Function
+    - ```python
+        if files:
+        sf.start_execution(
+            stateMachineArn=STATE_MACHINE_ARN,
+            input=json.dumps({"files": files})
+        )
+      ```
+    - After processing all records in the batch, if there is at least one genuinely new file, it fires ```orchestrate_data_ingestion``` with the list of new files as input. Each file object in the list contains ```bucket```, ```key```, and ```file_key``` all three are needed downstream: ```bucket``` and ```key``` go to Glue, ```file_key``` goes to DynamoDB updates in the Step Function.
+    - If ```files``` is empty (every record in the batch was a duplicate), the Step Function is never triggered at all. No compute wasted.
+- The Lambda is intentionally doing only two things: duplicate filtering and Step Function invocation. It is not running Glue, not doing transformation, not writing success/failure status. It just decides whether a file deserves to enter the pipeline at all, creates the initial DynamoDB record as a lock, and hands off. Everything else happens inside the Step Function.
 #### Step function (orchestrate_data_ingestion)
-- This step function is responsible for invoking and monitoring the AWS glue ETL pipeline and send the failed ingestion file related events to DLQ so that the data engineer team can debug and later use the same event to re-ingest the file.
-- What was missing in the previous version 4 implementation
-    - No SUCCESS update to DynamoDB
-    - No FAILED update to DynamoDB
-    - No file_key propagation
-    - No structured error capture
+- Attach this permissions to IAM role 
+    - ![orchestrate_data_ingestion_2](images/production_grade_glue_version5_dynamo_db/step_functions/orchestrate_data_ingestion_2.png)
+    - Let AWS create IAM role for this step function and add more permissions to this role as per your needs 
+    - Add permissions for dynamoDb named ```DynamoDBStepFunctionAccessPolicy```
+        - ```json
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "DynamoDBStepFunctionAccessPolicy",
+                        "Effect": "Allow",
+                        "Action": [
+                            "dynamodb:UpdateItem",
+                            "dynamodb:GetItem"
+                        ],
+                        "Resource": "arn:aws:dynamodb:ap-south-1:406868976171:table/file_processing_registry"
+                    }
+                ]
+            }
+          ```
+```json
+{
+  "Comment": "Glue ETL Orchestration with DynamoDB Tracking",
+  "StartAt": "ProcessFiles",
+  "States": {
+    "ProcessFiles": {
+      "Type": "Map",
+      "ItemsPath": "$.files",
+      "MaxConcurrency": 2,
+      "Iterator": {
+        "StartAt": "RunGlueJob",
+        "States": {
+          "RunGlueJob": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::glue:startJobRun.sync",
+            "Parameters": {
+              "JobName": "ingest_sales_data",
+              "Arguments": {
+                "--source_bucket.$": "$.bucket",
+                "--source_key.$": "$.key"
+              }
+            },
+            "ResultPath": "$.glueResult",
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Glue.ConcurrentRunsExceededException"
+                ],
+                "IntervalSeconds": 60,
+                "MaxAttempts": 10,
+                "BackoffRate": 1.5
+              },
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "IntervalSeconds": 30,
+                "MaxAttempts": 2,
+                "BackoffRate": 2
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "ResultPath": "$.error",
+                "Next": "UpdateFailure"
+              }
+            ],
+            "Next": "UpdateSuccess"
+          },
+          "UpdateSuccess": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Parameters": {
+              "TableName": "file_processing_registry",
+              "Key": {
+                "file_key": {
+                  "S.$": "$.file_key"
+                }
+              },
+              "UpdateExpression": "SET #s = :s, updated_at = :t",
+              "ExpressionAttributeNames": {
+                "#s": "status"
+              },
+              "ExpressionAttributeValues": {
+                ":s": {
+                  "S": "SUCCESS"
+                },
+                ":t": {
+                  "S.$": "$$.State.EnteredTime"
+                }
+              }
+            },
+            "End": true
+          },
+          "UpdateFailure": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Parameters": {
+              "TableName": "file_processing_registry",
+              "Key": {
+                "file_key": {
+                  "S.$": "$.file_key"
+                }
+              },
+              "UpdateExpression": "SET #s = :s, error_message = :e, updated_at = :t",
+              "ExpressionAttributeNames": {
+                "#s": "status"
+              },
+              "ExpressionAttributeValues": {
+                ":s": {
+                  "S": "FAILED"
+                },
+                ":e": {
+                  "S.$": "$.error.Cause"
+                },
+                ":t": {
+                  "S.$": "$$.State.EnteredTime"
+                }
+              }
+            },
+            "Next": "SendToDLQ"
+          },
+          "SendToDLQ": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::sqs:sendMessage",
+            "Parameters": {
+              "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868976171/sales-ingestion-dlq",
+              "MessageBody": {
+                "bucket.$": "$.bucket",
+                "key.$": "$.key",
+                "file_key.$": "$.file_key"
+              }
+            },
+            "End": true
+          }
+        }
+      },
+      "End": true
+    }
+  }
+}
+```
+- ![version5_orchestration_step_function](images/production_grade_glue_version5_dynamo_db/step_functions/version5_orchestration_step_function.png)
+- Three new states were inserted into this step function, and ```file_key``` was added to the Lambda payload 
+- The first addition is UpdateSuccess. After Glue finishes successfully, instead of jumping straight to End, the Step Function now calls dynamodb:updateItem and sets status = SUCCESS with a timestamp. This is what closes the idempotency loop — Lambda wrote IN_PROGRESS, and now the Step Function writes SUCCESS. The next time the same file arrives, Lambda's put_item with attribute_not_exists(file_key) will see the existing record and throw ConditionalCheckFailedException, which is exactly what you want.
+- The second addition is UpdateFailure. When Glue fails, before sending anything to the DLQ, the Step Function now writes status = FAILED and captures $.error.Cause as error_message in DynamoDB. This gives you a structured audit record you can query — you can run aws dynamodb scan --table-name file_processing_registry and immediately see which files failed and why, without digging through CloudWatch logs.
+- The third addition is that SendToDLQ's MessageBody now explicitly includes file_key alongside bucket and key. This is what makes the replay_failed_ingestion Step Function work correctly — when it reads a message from the DLQ and needs to call dynamodb:updateItem, it now has the file_key to use as the partition key lookup.
 - This version update brings 
     - ```Step Function = orchestrator + state updater```
+#### AWS Glue ETL (ingest_sales_data)
+- Create an IAM role called ```AWSGlueRole``` and give appropriate permissions so that AWS glue ETL can function properly
+    - Add permissions 
+        - Add an AWS managed permisson called ```AWSGlueServiceRole```
+        - Add a custom permission named ```LimitedS3PermissionPolicy```
+            - ```json
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "s3:GetObject",
+                                "s3:PutObject",
+                                "s3:ListBucket"
+                            ],
+                            "Resource": [
+                                "arn:aws:s3:::aws-glue-s3-bucket-one",
+                                "arn:aws:s3:::aws-glue-s3-bucket-one/*",
+                                "arn:aws:s3:::data-sink-one",
+                                "arn:aws:s3:::data-sink-one/*"
+                            ]
+                        }
+                    ]
+                }
+              ```
+```python
+import sys
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.job import Job
+from awsglue.gluetypes import *
+from awsgluedq.transforms import EvaluateDataQuality
+from awsglue import DynamicFrame
+
+from functools import reduce
+from pyspark.sql import functions as F
+
+def sparkSqlQuery(glueContext, query, mapping, transformation_ctx) -> DynamicFrame:
+    for alias, frame in mapping.items():
+        frame.toDF().createOrReplaceTempView(alias)
+    result = spark.sql(query)
+    return DynamicFrame.fromDF(result, glueContext, transformation_ctx)
+def _find_null_fields(ctx, schema, path, output, nullStringSet, nullIntegerSet, frame):
+    if isinstance(schema, StructType):
+        for field in schema:
+            new_path = path + "." if path != "" else path
+            output = _find_null_fields(ctx, field.dataType, new_path + field.name, output, nullStringSet, nullIntegerSet, frame)
+    elif isinstance(schema, ArrayType):
+        if isinstance(schema.elementType, StructType):
+            output = _find_null_fields(ctx, schema.elementType, path, output, nullStringSet, nullIntegerSet, frame)
+    elif isinstance(schema, NullType):
+        output.append(path)
+    else:
+        x, distinct_set = frame.toDF(), set()
+        for i in x.select(path).distinct().collect():
+            distinct_ = i[path.split('.')[-1]]
+            if isinstance(distinct_, list):
+                distinct_set |= set([item.strip() if isinstance(item, str) else item for item in distinct_])
+            elif isinstance(distinct_, str) :
+                distinct_set.add(distinct_.strip())
+            else:
+                distinct_set.add(distinct_)
+        if isinstance(schema, StringType):
+            if distinct_set.issubset(nullStringSet):
+                output.append(path)
+        elif isinstance(schema, IntegerType) or isinstance(schema, LongType) or isinstance(schema, DoubleType):
+            if distinct_set.issubset(nullIntegerSet):
+                output.append(path)
+    return output
+
+def drop_nulls(glueContext, frame, nullStringSet, nullIntegerSet, transformation_ctx) -> DynamicFrame:
+    nullColumns = _find_null_fields(frame.glue_ctx, frame.schema(), "", [], nullStringSet, nullIntegerSet, frame)
+    return DropFields.apply(frame=frame, paths=nullColumns, transformation_ctx=transformation_ctx)
+
+args = getResolvedOptions(sys.argv, [
+    'JOB_NAME',
+    'source_bucket',
+    'source_key'
+])
+
+source_bucket = args['source_bucket']
+source_key = args['source_key']
+
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+job = Job(glueContext)
+job.init(args['JOB_NAME'], args)
+
+# Default ruleset used by all target nodes with data quality enabled
+DEFAULT_DATA_QUALITY_RULESET = """Rules = [
+    ColumnCount = 16,
+
+    IsComplete "rating",
+    IsComplete "rating_count",
+    IsComplete "discounted_price",
+    IsComplete "actual_price",
+
+    ColumnValues "rating" >= 0,
+    ColumnValues "rating_count" >= 0,
+    ColumnValues "discounted_price" >= 0,
+    ColumnValues "actual_price" >= 0,
+    ColumnValues "discount_percentage" >= 0,
+    
+    IsUnique "product_id"
+]"""
+
+# -------- DELIMITER CORRUPTION CHECK -------- #
+# It checks for delimiter / structural corruption STARTS
+import csv
+import io
+
+raw_lines = spark.read.text(f"s3://{source_bucket}/{source_key}").collect()
+
+if len(raw_lines) < 2:
+    raise Exception("Glue Visual ETL | Corrupted CSV detected (file has no data rows)")
+
+def count_csv_columns(line: str) -> int:
+    """Count columns correctly, respecting quoted fields containing commas."""
+    try:
+        return len(next(csv.reader(io.StringIO(line))))
+    except StopIteration:
+        return 0
+
+header_line = raw_lines[0][0]
+expected_col_count = count_csv_columns(header_line)
+
+bad_row_indices = []
+for i, row in enumerate(raw_lines[1:], start=2):
+    line = row[0]
+    actual_col_count = count_csv_columns(line)
+    if actual_col_count != expected_col_count:
+        bad_row_indices.append((i, actual_col_count, line[:80]))
+
+if bad_row_indices:
+    details = "\n".join(
+        [f"  Line {idx}: expected {expected_col_count} cols, got {actual} → {preview}..."
+         for idx, actual, preview in bad_row_indices]
+    )
+    raise Exception(
+        f"Glue Visual ETL | Corrupted CSV detected — {len(bad_row_indices)} row(s) have wrong column count "
+        f"(likely semicolons used as delimiters instead of commas):\n{details}"
+    )
+
+print(f"Glue Visual ETL | Column count validation passed: all rows have {expected_col_count} columns")
+# It checks for delimiter / structural corruption ENDS
+# -------- DELIMITER CORRUPTION CHECK -------- #
+
+# Script generated for node Raw data source S3
+RawdatasourceS3_node1772431168408 = glueContext.create_dynamic_frame.from_options(format_options={"quoteChar": "\"", "withHeader": True, "separator": ",", "mode": "PERMISSIVE", "optimizePerformance": False}, connection_type="s3", format="csv", 
+    # connection_options={"paths": ["s3://aws-glue-s3-bucket-one/raw_data/sales_data/"], "recurse": True}, 
+    connection_options={"paths": [f"s3://{source_bucket}/{source_key}"],"recurse": False},
+    transformation_ctx="RawdatasourceS3_node1772431168408")
+# for debugging only
+print(f"Glue Visual ETL | Processing file: s3://{source_bucket}/{source_key}")
+
+df = RawdatasourceS3_node1772431168408.toDF()
+
+print("Glue Visual ETL | DEBUG bucket:", source_bucket)
+print("Glue Visual ETL | DEBUG key:", source_key)
+print("Glue Visual ETL | DEBUG columns:", df.columns)
+print("Glue Visual ETL | DEBUG row count:", df.count())
+print("Glue Visual ETL | DEBUG schema:", df.schema)
+print("Glue Visual ETL | DEBUG sample rows:", df.limit(2).toPandas())
+
+# -------- CORRUPTION CHECK -------- #
+# checks Spark-level corruption after parsing STARTS
+
+# If Spark inferred no columns → corrupted file
+if len(df.columns) == 0:
+    raise Exception("Glue Visual ETL | Corrupted CSV detected (no columns inferred)")
+
+expected_cols = len(df.columns)
+
+# If dataframe empty → corrupted file
+if df.limit(1).count() == 0:
+    raise Exception("Glue Visual ETL | Corrupted CSV detected (empty dataframe)")
+
+# Row-level corruption detection
+null_exprs = [F.col(c).isNull().cast("int") for c in df.columns]
+
+bad_rows = df.filter(
+    reduce(lambda a, b: a + b, null_exprs) > expected_cols * 0.7
+)
+
+if bad_rows.limit(1).count() > 0:
+    raise Exception("Glue Visual ETL | Corrupted CSV detected (null-heavy rows)")
+
+# checks Spark-level corruption after parsing ENDS
+# -------- CORRUPTION CHECK -------- #
+
+#--------- CONVERT THE COLUMNS IN THE CSV FILE TO CORRECT DATA TYPES --------#
+# Script generated for node SQL Query
+SqlQuery61 = '''
+SELECT
+    product_id,
+    product_name,
+    category,
+    about_product,
+    user_id,
+    user_name,
+    review_id,
+    review_title,
+    review_content,
+    img_link,
+    product_link,
+
+    -- discounted_price: ₹149 → 149.0
+    CAST(
+        REGEXP_REPLACE(discounted_price, '[^0-9.]', '')
+        AS DOUBLE
+    ) AS discounted_price,
+
+    -- actual_price: ₹1,000 → 1000.0
+    CAST(
+        REGEXP_REPLACE(actual_price, '[^0-9.]', '')
+        AS DOUBLE
+    ) AS actual_price,
+
+    -- discount_percentage: 85% → 85.0
+    CAST(
+        REGEXP_REPLACE(discount_percentage, '[^0-9.]', '')
+        AS DOUBLE
+    ) AS discount_percentage,
+
+    -- rating: 3.9 → 3.9
+    CAST(
+        REGEXP_REPLACE(rating, '[^0-9.]', '')
+        AS DOUBLE
+    ) AS rating,
+
+    -- rating_count: 24,871 → 24871
+    CAST(
+        REGEXP_REPLACE(rating_count, '[^0-9]', '')
+        AS INT
+    ) AS rating_count
+
+FROM myDataSource;
+'''
+
+try:
+    SQLQuery_node1772431252856 = sparkSqlQuery(glueContext, query = SqlQuery61, mapping = {"myDataSource":RawdatasourceS3_node1772431168408}, transformation_ctx = "SQLQuery_node1772431252856")
+except Exception as e:
+    print(f"Glue Visual ETL | SQL query execution failed | {e}")
+    raise RuntimeError("Failing Glue job explicitly | Failed to execute sql query")
+#--------- CONVERT THE COLUMNS IN THE CSV FILE TO CORRECT DATA TYPES --------#
+
+# Script generated for node Drop Null Fields
+DropNullFields_node1772431857999 = drop_nulls(glueContext, frame=SQLQuery_node1772431252856, nullStringSet={"", "null"}, nullIntegerSet={-1}, transformation_ctx="DropNullFields_node1772431857999")
+
+# -------- DEDUPLICATION STEP -------- #
+# This will check if there exists a row with a duplicate review_id if yes then it will drop one of the row and make sure that the row is unique
+# Doing this prevents any data duplication 
+df_clean = DropNullFields_node1772431857999.toDF()
+
+deduped_df = df_clean.dropDuplicates()
+
+print("Glue Visual ETL | Before dedup:", df_clean.count())
+print("Glue Visual ETL | After dedup:", deduped_df.count())
+
+deduped_dynamic_frame = DynamicFrame.fromDF(
+    deduped_df, glueContext, "deduped_dynamic_frame"
+)
+# -------- DEDUPLICATION STEP -------- #
+
+# Script generated for node Silver layer data sink S3
+try:
+    EvaluateDataQuality().process_rows(frame=deduped_dynamic_frame, ruleset=DEFAULT_DATA_QUALITY_RULESET, publishing_options={"dataQualityEvaluationContext": "EvaluateDataQuality_node1772428328053", "enableDataQualityResultsPublishing": True}, additional_options={"dataQualityResultsPublishing.strategy": "BEST_EFFORT", "observations.scope": "ALL"})
+except Exception as e:
+    print("Glue Visual ETL | DQ failed:", e)
+    raise RuntimeError("Failing Glue job explicitly | Failed to run data quality rules")
+
+SilverlayerdatasinkS3_node1772432020219 = glueContext.getSink(path="s3://data-sink-one/silver_layer/sales_data/", connection_type="s3", updateBehavior="LOG", partitionKeys=["category"], enableUpdateCatalog=True, transformation_ctx="SilverlayerdatasinkS3_node1772432020219")
+SilverlayerdatasinkS3_node1772432020219.setCatalogInfo(catalogDatabase="aws-glue-tutorial-aditya",catalogTableName="silver_table_sales_data")
+SilverlayerdatasinkS3_node1772432020219.setFormat("glueparquet", compression="snappy")
+SilverlayerdatasinkS3_node1772432020219.writeFrame(deduped_dynamic_frame)
+job.commit()
+```
+- AWS Glue ETL configurations
+    - ![ingest_sales_data_1](images/production_grade_glue_version5_dynamo_db/AWS_glue_ETL/ingest_sales_data_1.png)
+    - ![ingest_sales_data_2](images/production_grade_glue_version5_dynamo_db/AWS_glue_ETL/ingest_sales_data_2.png)
+    - ![ingest_sales_data_3](images/production_grade_glue_version5_dynamo_db/AWS_glue_ETL/ingest_sales_data_3.png)
+    - ![ingest_sales_data_4](images/production_grade_glue_version5_dynamo_db/AWS_glue_ETL/ingest_sales_data_4.png)
+    - ![ingest_sales_data_5](images/production_grade_glue_version5_dynamo_db/AWS_glue_ETL/ingest_sales_data_5.png)
+    - ![ingest_sales_data_6](images/production_grade_glue_version5_dynamo_db/AWS_glue_ETL/ingest_sales_data_6.png)
+- The Glue script is the actual workhorse of the entire pipeline. Every other component — S3, EventBridge, SQS, Lambda, Step Function — exists purely to get a file path to this script safely and exactly once. Here is what it does, stage by stage.
+    - ![glue_etl_pipeline_flow](images/production_grade_glue_version5_dynamo_db/AWS_glue_ETL/glue_etl_pipeline_flow.svg)
+    - How it receives its input
+        - The Step Function calls ```glue:startJobRun``` and passes ```--source_bucket``` and ```--source_key``` as job arguments. Glue captures them with ```getResolvedOptions```. This is critical the script processes exactly one specific file, not a whole folder. It knows precisely which file to open because the Lambda extracted bucket and key from the S3 event and the Step Function forwarded them here.
+    - Stage 1 — Delimiter corruption check
+        - Before Spark even touches the file, the script reads it as raw text line by line and counts the columns in every single row using Python's ```csv.reader```. It compares each row's column count against the header's column count. If any row has a different count — which happens when a file uses semicolons instead of commas as delimiters, or has extra commas inside unquoted fields — it raises an ```Exception``` immediately with the exact line numbers that are broken. This is a fast, pre-Spark guard that catches structural corruption before wasting cluster resources.
+    - Stage 2 — Read CSV into DynamicFrame
+        - Now Glue reads the file into a ```DynamicFrame``` using ```create_dynamic_frame.from_options```. Notice ```"recurse": False``` it reads only the exact file specified, not the whole folder. The ```"mode": "PERMISSIVE"``` setting means Spark won't crash on individual bad rows during parsing; instead it sets those fields to null, which the subsequent checks then catch.
+    - Stage 3 — Spark-level corruption check
+        - After Spark parses the file, three more checks run. First it verifies that Spark actually inferred at least one column — an empty column list means the file was completely unreadable. Second it checks the DataFrame isn't empty. Third it looks for rows where more than 70% of columns are null, which indicates rows that Spark parsed but mostly failed on. Any of these throws an ```Exception```.
+    - Stage 4 — SQL type casting
+        - This is where the actual transformation happens. The CSV stores everything as strings — prices come in as ```"₹1,499"```, discounts as ```"85%"```, ratings as ```"3.9"```. The SQL query uses ```REGEXP_REPLACE``` to strip all non-numeric characters, then ```CAST``` converts them to ```DOUBLE``` or ```INT```. The 11 text columns (```product_id```, ```product_name```, ```category```, etc.) pass through unchanged. If this SQL fails for any reason, it re-raises as a RuntimeError so the Step Function's Catch block can detect it and route to ```UpdateFailure``` + DLQ.
+    - Stage 5 — Drop null columns
+        - The drop_nulls function walks the schema recursively and finds any columns where every single value is either empty string, ```"null```", or ```-1```. Those entire columns are dropped. This handles the case where a CSV has a column header but no data ever in it across the whole file.
+    - Stage 6 — Deduplication
+        - ```dropDuplicates()``` with no arguments compares every column in every row. If two rows are completely identical across all columns, one gets dropped. This prevents duplicate rows from landing in the Silver layer if the upstream system accidentally sent the same record twice.
+    - Stage 7 — Data quality evaluation
+        - ```EvaluateDataQuality``` runs a formal ruleset against the data before writing it anywhere. The rules check that the column count is exactly 16 (schema drift detection), that key numeric columns have no nulls, that no numeric column has negative values, and that ```product_id``` is unique. This is wrapped in a ```try/except``` — if the rules fail, it raises ```RuntimeError``` explicitly. This is important because without the explicit raise, Glue might log the DQ failure but continue writing bad data to S3.
+    - Stage 8 — Write to Silver S3 and update catalog
+        - If all checks pass, the data is written to ```s3://data-sink-one/silver_layer/sales_data/``` as Snappy-compressed Parquet files, partitioned by ```category```. The ```enableUpdateCatalog=True``` and ```setCatalogInfo``` call means Glue simultaneously registers or updates the table ```silver_table_sales_data``` in the Glue Data Catalog. This is what makes the data immediately queryable in Athena without needing to run a crawler separately.
+        - Finally job.commit() tells Glue the job succeeded cleanly.
+- How failure flows back to the rest of the pipeline?
+    - Any ```raise``` in this script causes the Glue job to exit with a failed status. The Step Function is waiting with ```glue:startJobRun.sync```, so it detects the failure immediately and routes to ```UpdateFailure``` which writes ```status = FAILED``` and the error message to DynamoDB then sends the event to the DLQ. From there your ```replay_failed_ingestion``` Step Function can pick it up later once the underlying problem is fixed.
+#### DynamoDB setup
+- ![dynamo_db_1](images/production_grade_glue_version5_dynamo_db/dynamo_db/dynamo_db_1.png)
+- ![dynamo_db_2](images/production_grade_glue_version5_dynamo_db/dynamo_db/dynamo_db_2.png)
+- ![dynamo_db_3](images/production_grade_glue_version5_dynamo_db/dynamo_db/dynamo_db_3.png)
+- ![dynamo_db_4](images/production_grade_glue_version5_dynamo_db/dynamo_db/dynamo_db_4.png)
+- ![dynamo_db_5](images/production_grade_glue_version5_dynamo_db/dynamo_db/dynamo_db_5.png)
+- The table name in dynamoDB is ```file_processing_registry```
+- After the setup you will see that lamdba function added these in dynamoDb
+    - ![dynamo_db_6](images/production_grade_glue_version5_dynamo_db/dynamo_db/dynamo_db_6.png)
+    - As you can see that the files are being tracked successfully.
+#### Things to remember
+- 
+
+
+
+
+
+
+
+
+
+
+
 
 - Things to rememeber when creating a table in dynamo db 
     - Partition key should be set to ```file_key```

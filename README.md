@@ -3562,7 +3562,7 @@ You can use:
 - MatchesRegex
 - ReferentialIntegrity
 
-## Implementation : (Version 5) (Pending to be implemented)
+## Implementation : (Version 5)
 - In this phase of implementation I am going to implement dynamo db to keep track of files that have been ingested successfully or failed or in progress
 
 ### Theory : Implementation (Version 5)

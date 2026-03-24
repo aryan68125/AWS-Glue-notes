@@ -3649,6 +3649,9 @@ You can use:
 - This version update brings 
     - ```Step Function = orchestrator + state updater```
 
+- Things to rememeber when creating a table in dynamo db 
+    - Partition key should be set to ```file_key```
+
 This is the command used to query the data present in the dynamoDB
 ```aws dynamodb scan --table-name file_processing_registry```
 

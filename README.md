@@ -4593,6 +4593,25 @@ job.commit()
     - Partition key should be set to ```file_key```
     - This is the command used to query the data present in the dynamoDB ```aws dynamodb scan --table-name file_processing_registry```
 ### Issues I faced during Implementation phase for version 5
+- The issue I was facing is that ```UpdateFailure``` is working correctly ```status = FAILED``` and ```error_message``` is polulated in dynamoDB but the DLQ is empty. This happens when there is failure in the execution AWS glue ETL pipeline. 
+- My dynamoDB record shows 
+    - ```status = FAILED``` UpdateFailure ran successfully
+    - ```error_message``` is populated with the full Glue error.
+    - ```updated_at = 2026-03-24T11:49:40.057Z```
+- So ```UpdateFailure``` is completing. But the DLQ is empty which means ```SendToDLQ``` is failing silently after ```UpdateFailure```.
+- The reason is in ```SendToDLQ```. Look at what it tries to read:
+    - ```json
+        "MessageBody": {
+        "bucket.$":   "$.bucket",
+        "key.$":      "$.key",
+        "file_key.$": "$.file_key"
+        }
+      ```
+- These paths — ```$.bucket```, ```$.key```, ```$.file_key``` came from the Map iterator input. But after ```RunGlueJob``` fails with ```"ResultPath": "$.error"```, the error gets written to ```$.error```. At this point the Step Function state still has ```$.bucket```, ```$.key```, ```$.file_key``` available from the original Map item input.
+- However, look at your Glue runs in Image 1 — they are all failing in about 1 minute, and the ```States.ALL``` retry fires 2 times with 30 second intervals before the Catch block runs. During those retries, the ```ResultPath``` behaviour can shift the state. More critically — look at the failure time: ```17:17:37``` to ```17:18:47``` is only 1m 2s, which means the retries may not be completing cleanly, causing the input state to be in an unexpected shape when ```UpdateFailure``` runs.
+- The most likely cause is this: SendToDLQ is throwing because ```$.bucket```, ```$.key```, or ```$.file_key``` is resolving to null in the state context after the retry/catch cycle. You can confirm this by going to the Step Function execution for the ```17:17:37``` run and checking whether ```SendToDLQ``` appears in the execution history at all, and what error it shows.
+
+
 
 
 

@@ -4670,7 +4670,8 @@ Solution :
           ```
     - The key change is adding ```"ResultPath": "$.dynamoResult"``` to ```UpdateFailure```. Without this, ```UpdateFailure```'s output replaces the entire state with the DynamoDB response, wiping out ```$.bucket```, ```$.key```, and ```$.file_key```. When ```SendToDLQ``` then tries to read ```$.bucket``` it gets null and throws.
     - With ```"ResultPath": "$.dynamoResult"```, the DynamoDB response is written to ```$.dynamoResult``` and the rest of the original state including ```$.bucket```, ```$.key```, ```$.file_key``` is preserved for ```SendToDLQ``` to read correctly.
-#### Fixed code (orchestrate_data_ingestion step function)
+
+#### Fixed step function code (orchestrate_data_ingestion step function)
 ```json
 {
   "Comment": "Glue ETL Orchestration with DynamoDB Tracking",
@@ -4798,6 +4799,348 @@ Solution :
 }
 ```
 
+#### retry_count type mismatch (replay_failed_ingestion step function)
+Explainaing what is happening : 
+- The problem — DynamoDB Number type vs Step Functions string comparison
+- When DynamoDB returns a Number attribute, it comes back in the Step Functions state as a JSON object like this:
+    - ```json
+      "retry_count": { "N": "0" }
+      ```
+- The "N" value is a string "0", not a numeric 0. Step Functions stores DynamoDB Number values as strings internally.
+- ```EvaluateRetry``` condition is:
+    - ```json
+        {
+        "Variable": "$.ddb.Item.retry_count.N",
+        "NumericLessThan": 3,
+        "Next": "IncrementRetry"
+        }
+      ```
+- ```NumericLessThan: 3``` expects the variable to be a numeric type. But ```$.ddb.Item.retry_count.N``` is the string ```"0"```
+- The numeric comparison against a string fails silently it evaluates to false and the Default branch runs, sending you to SkipReplay every time.
+
+Solution : 
+- use StringLessThan instead
+    - ```json
+      "EvaluateRetry": {
+        "Type": "Choice",
+        "Choices": [
+            {
+            "Variable": "$.ddb.Item.retry_count.N",
+            "StringLessThan": "3",
+            "Next": "IncrementRetry"
+            }
+        ],
+        "Default": "SkipReplay"
+        }
+      ```
+    - ```StringLessThan: "3"``` correctly compares the string ```"0"``` against the string ```"3"```, and since ```"0" < "3"``` lexicographically, it routes to ```IncrementRetry``` and the Glue job runs.
+    - This works correctly for single-digit retry counts (0, 1, 2). Since my limit is 3, I will never reach double digits, so string comparison is safe here.
+
+#### Error in (replay_failed_ingestion)
+This is the error message that I recieved when trying to execute the replay step function:
+```json
+An error occurred while executing the state 'RunGlueJob' (entered at the event id #26). The JSONPath '$.parsed.body.bucket' specified for the field '--source_bucket.$' could not be found in the input '{"SdkHttpMetadata":{"AllHttpHeaders":{"Server":["Server"],"Connection":["keep-alive"],"x-amzn-RequestId":["VRHKQ440NT8P25MIPT1MU4NPMBVV4KQNSO5AEMVJF66Q9ASUAAJG"],"x-amz-crc32":["2745614147"],"Content-Length":["2"],"Date":["Wed, 25 Mar 2026 07:01:55 GMT"],"Content-Type":["application/x-amz-json-1.0"]},"HttpHeaders":{"Connection":"keep-alive","Content-Length":"2","Content-Type":"application/x-amz-json-1.0","Date":"Wed, 25 Mar 2026 07:01:55 GMT","Server":"Server","x-amz-crc32":"2745614147","x-amzn-RequestId":"VRHKQ440NT8P25MIPT1MU4NPMBVV4KQNSO5AEMVJF66Q9ASUAAJG"},"HttpStatusCode":200},"SdkResponseMetadata":{"RequestId":"VRHKQ440NT8P25MIPT1MU4NPMBVV4KQNSO5AEMVJF66Q9ASUAAJG"}}'
+```
+- The error says ```$.parsed.body.bucket``` could not be found, and the input it shows is the DynamoDB ```updateItem``` response ```SdkHttpMetadata```, ```HttpStatusCode: 200```, etc. This means ```IncrementRetry```'s output is replacing the entire state, wiping out ```$.parsed``` before ```RunGlueJob``` can read it.
+- The root cause missing ```ResultPath``` on ```IncrementRetry```
+    - Look at ```IncrementRetry``` state:
+        - ```json
+            "IncrementRetry": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Parameters": { ... },
+            "Next": "RunGlueJob"
+            }
+          ```
+    - There is no ```ResultPath```. When a Task state has no ```ResultPath```, the AWS SDK response from DynamoDB completely replaces the entire state input. So when ```RunGlueJob``` runs, the state no longer contains ```$.parsed.body.bucket``` it only contains the DynamoDB HTTP response object you can see in the error.
+
+Solution : 
+- Add ```"ResultPath": "$.incrementResult"``` to ```IncrementRetry``` so the DynamoDB response is written to a separate field and the original state — including ```$.parsed.body.bucket```, ```$.parsed.body.key```, ```$.parsed.body.file_key``` — is preserved:
+    - ```json
+        "IncrementRetry": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::dynamodb:updateItem",
+        "Parameters": {
+            "TableName": "file_processing_registry",
+            "Key": {
+            "file_key": {
+                "S.$": "$.parsed.body.file_key"
+            }
+            },
+            "UpdateExpression": "ADD retry_count :inc",
+            "ExpressionAttributeValues": {
+            ":inc": { "N": "1" }
+            }
+        },
+        "ResultPath": "$.incrementResult",
+        "Next": "RunGlueJob"
+        }
+      ```
+- add ResultPath to every Task state that writes to DynamoDB so the response never overwrites the original input:
+    - ```json
+      "UpdateFailure": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::dynamodb:updateItem",
+        "Parameters": {
+            "TableName": "file_processing_registry",
+            "Key": {
+            "file_key": { "S.$": "$.parsed.body.file_key" }
+            },
+            "UpdateExpression": "SET #s = :s, error_message = :e, updated_at = :t",
+            "ExpressionAttributeNames": { "#s": "status" },
+            "ExpressionAttributeValues": {
+            ":s": { "S": "FAILED" },
+            ":e": { "S.$": "States.JsonToString($.error)" },
+            ":t": { "S.$": "$$.State.EnteredTime" }
+            }
+        },
+        "ResultPath": "$.updateFailureResult",
+        "Next": "DeleteMessage"
+        },
+        "UpdateSuccess": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::dynamodb:updateItem",
+        "Parameters": {
+            "TableName": "file_processing_registry",
+            "Key": {
+            "file_key": { "S.$": "$.parsed.body.file_key" }
+            },
+            "UpdateExpression": "SET #s = :s, updated_at = :t",
+            "ExpressionAttributeNames": { "#s": "status" },
+            "ExpressionAttributeValues": {
+            ":s": { "S": "SUCCESS" },
+            ":t": { "S.$": "$$.State.EnteredTime" }
+            }
+        },
+        "ResultPath": "$.updateSuccessResult",
+        "Next": "DeleteMessage"
+        }
+      ```
+- Every Task state that writes to DynamoDB ```IncrementRetry```, ````UpdateSuccess````, ```UpdateFailure``` needs a ```ResultPath``` that dumps the AWS SDK response somewhere harmless. Without it, the DynamoDB HTTP response body replaces the entire state and ```$.parsed.receiptHandle``` disappears before ```DeleteMessage``` can use it.
+
+#### Design error in (replay_failed_ingestion) where right now the delete event message from sqs queue is running regardless of ETL success or failure I need to fix it 
+- Before : 
+![replay_state_function_diagram_1](images/production_grade_glue_version5_dynamo_db/step_functions/replay_state_function_diagram_1.png)
+- After : 
+![replay_state_function_diagram_2](images/production_grade_glue_version5_dynamo_db/step_functions/replay_state_function_diagram_2.png)
+- In order to implement the changes all you need to do is 
+    - Before : 
+        - ```json
+            "UpdateFailure": {
+            ...
+            "Next": "DeleteMessage"   ← always deletes, success or failure
+            }
+          ```
+    - change the above code to this : only delete on success, keep message on failure in DLQ
+        - ```json
+            "UpdateFailure": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Parameters": {
+                "TableName": "file_processing_registry",
+                "Key": {
+                "file_key": { "S.$": "$.parsed.body.file_key" }
+                },
+                "UpdateExpression": "SET #s = :s, error_message = :e, updated_at = :t",
+                "ExpressionAttributeNames": { "#s": "status" },
+                "ExpressionAttributeValues": {
+                ":s": { "S": "FAILED" },
+                ":e": { "S.$": "States.JsonToString($.error)" },
+                ":t": { "S.$": "$$.State.EnteredTime" }
+                }
+            },
+            "ResultPath": "$.updateFailureResult",
+            "End": true
+            }
+          ```
+#### Fixed step function code (replay_failed_ingestion step function) 
+```json
+{
+  "Comment": "Replay ETL from DLQ (Fixed - State Preservation + Safe Errors)",
+  "StartAt": "ReceiveFromDLQ",
+  "States": {
+    "ReceiveFromDLQ": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:sqs:receiveMessage",
+      "Parameters": {
+        "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868976171/sales-ingestion-dlq",
+        "MaxNumberOfMessages": 10
+      },
+      "ResultPath": "$.dlq",
+      "Next": "CheckIfEmpty"
+    },
+    "CheckIfEmpty": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.dlq.Messages",
+          "IsPresent": false,
+          "Next": "Success"
+        }
+      ],
+      "Default": "ReplayBatch"
+    },
+    "ReplayBatch": {
+      "Type": "Map",
+      "ItemsPath": "$.dlq.Messages",
+      "MaxConcurrency": 2,
+      "Iterator": {
+        "StartAt": "ExtractPayload",
+        "States": {
+          "ExtractPayload": {
+            "Type": "Pass",
+            "Parameters": {
+              "receiptHandle.$": "$.ReceiptHandle",
+              "body.$": "States.StringToJson($.Body)"
+            },
+            "ResultPath": "$.parsed",
+            "Next": "CheckRetry"
+          },
+          "CheckRetry": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:getItem",
+            "Parameters": {
+              "TableName": "file_processing_registry",
+              "Key": {
+                "file_key": {
+                  "S.$": "$.parsed.body.file_key"
+                }
+              }
+            },
+            "ResultPath": "$.ddb",
+            "Next": "EvaluateRetry"
+          },
+          "EvaluateRetry": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Variable": "$.ddb.Item.retry_count.N",
+                "StringLessThan": "3",
+                "Next": "IncrementRetry"
+              }
+            ],
+            "Default": "SkipReplay"
+          },
+          "IncrementRetry": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Parameters": {
+              "TableName": "file_processing_registry",
+              "Key": {
+                "file_key": {
+                  "S.$": "$.parsed.body.file_key"
+                }
+              },
+              "UpdateExpression": "ADD retry_count :inc",
+              "ExpressionAttributeValues": {
+                ":inc": {
+                  "N": "1"
+                }
+              }
+            },
+            "ResultPath": "$.incrementResult",
+            "Next": "RunGlueJob"
+          },
+          "RunGlueJob": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::glue:startJobRun.sync",
+            "ResultPath": "$.glueResult",
+            "Parameters": {
+              "JobName": "ingest_sales_data",
+              "Arguments": {
+                "--source_bucket.$": "$.parsed.body.bucket",
+                "--source_key.$": "$.parsed.body.key"
+              }
+            },
+            "Catch": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "ResultPath": "$.error",
+                "Next": "UpdateFailure"
+              }
+            ],
+            "Next": "UpdateSuccess"
+          },
+          "UpdateSuccess": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Parameters": {
+              "TableName": "file_processing_registry",
+              "Key": {
+                "file_key": {
+                  "S.$": "$.parsed.body.file_key"
+                }
+              },
+              "UpdateExpression": "SET #s = :s, updated_at = :t",
+              "ExpressionAttributeNames": {
+                "#s": "status"
+              },
+              "ExpressionAttributeValues": {
+                ":s": {
+                  "S": "SUCCESS"
+                },
+                ":t": {
+                  "S.$": "$$.State.EnteredTime"
+                }
+              }
+            },
+            "ResultPath": "$.updateSuccessResult",
+            "Next": "DeleteMessage"
+          },
+          "UpdateFailure": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Parameters": {
+              "TableName": "file_processing_registry",
+              "Key": {
+                "file_key": {
+                  "S.$": "$.parsed.body.file_key"
+                }
+              },
+              "UpdateExpression": "SET #s = :s, error_message = :e, updated_at = :t",
+              "ExpressionAttributeNames": {
+                "#s": "status"
+              },
+              "ExpressionAttributeValues": {
+                ":s": {
+                  "S": "FAILED"
+                },
+                ":e": {
+                  "S.$": "States.JsonToString($.error)"
+                },
+                ":t": {
+                  "S.$": "$$.State.EnteredTime"
+                }
+              }
+            },
+            "ResultPath": "$.updateFailureResult",
+            "End": true
+          },
+          "SkipReplay": {
+            "Type": "Pass",
+            "Next": "DeleteMessage"
+          },
+          "DeleteMessage": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:sqs:deleteMessage",
+            "Parameters": {
+              "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868976171/sales-ingestion-dlq",
+              "ReceiptHandle.$": "$.parsed.receiptHandle"
+            },
+            "End": true
+          }
+        }
+      },
+      "Next": "Success"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}
+```
 
 
 

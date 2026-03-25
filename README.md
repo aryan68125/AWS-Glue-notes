@@ -4593,7 +4593,7 @@ job.commit()
     - Partition key should be set to ```file_key```
     - This is the command used to query the data present in the dynamoDB ```aws dynamodb scan --table-name file_processing_registry```
 ### Issues I faced during Implementation phase for version 5
-TODO refer to chat https://claude.ai/chat/04ebe7b7-632d-4a52-94eb-5e66fb0d933b
+
 
 
 

@@ -5142,6 +5142,11 @@ Solution :
 }
 ```
 
+#### GAPs that I need to fix TODO : Tomorrow 
+Search for this  
+- I also want to insert the sqs event message that is being saved in DLQ to be inserted in dynamoDB so that I can prevent the messages from being lost.  at the event of failure
+- In this chat : https://claude.ai/chat/04ebe7b7-632d-4a52-94eb-5e66fb0d933b 
+
 
 
 

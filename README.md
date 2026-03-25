@@ -4593,7 +4593,8 @@ job.commit()
     - Partition key should be set to ```file_key```
     - This is the command used to query the data present in the dynamoDB ```aws dynamodb scan --table-name file_processing_registry```
 ### Issues I faced during Implementation phase for version 5
-- The issue I was facing is that ```UpdateFailure``` is working correctly ```status = FAILED``` and ```error_message``` is polulated in dynamoDB but the DLQ is empty. This happens when there is failure in the execution AWS glue ETL pipeline. 
+#### The issue I was facing is that ```UpdateFailure``` is working correctly ```status = FAILED``` and ```error_message``` is polulated in dynamoDB but the DLQ is empty. This happens when there is failure in the execution AWS glue ETL pipeline. (orchestrate_data_ingestion step function related bug)
+Explainaing what is happening : 
 - My dynamoDB record shows 
     - ```status = FAILED``` UpdateFailure ran successfully
     - ```error_message``` is populated with the full Glue error.
@@ -4611,7 +4612,180 @@ job.commit()
 - However, look at your Glue runs in Image 1 — they are all failing in about 1 minute, and the ```States.ALL``` retry fires 2 times with 30 second intervals before the Catch block runs. During those retries, the ```ResultPath``` behaviour can shift the state. More critically — look at the failure time: ```17:17:37``` to ```17:18:47``` is only 1m 2s, which means the retries may not be completing cleanly, causing the input state to be in an unexpected shape when ```UpdateFailure``` runs.
 - The most likely cause is this: SendToDLQ is throwing because ```$.bucket```, ```$.key```, or ```$.file_key``` is resolving to null in the state context after the retry/catch cycle. You can confirm this by going to the Step Function execution for the ```17:17:37``` run and checking whether ```SendToDLQ``` appears in the execution history at all, and what error it shows.
 
-
+Solution : 
+- pass file context explicitly through the error catch
+    - Change ```RunGlueJob```'s ```Catch``` block to preserve the original input alongside the error:
+        - ```json
+            "Catch": [
+            {
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.error",
+                "Next": "UpdateFailure"
+            }
+            ]
+          ```
+    - This is already correct. The problem is subtler ```SendToDLQ``` needs to reference fields that are guaranteed to exist. Add a dedicated ```Pass``` state between ```UpdateFailure``` and ```SendToDLQ``` that explicitly builds the message body from known-safe paths:
+        - ```json
+          "UpdateFailure": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Parameters": {
+                "TableName": "file_processing_registry",
+                "Key": { "file_key": { "S.$": "$.file_key" } },
+                "UpdateExpression": "SET #s = :s, error_message = :e, updated_at = :t",
+                "ExpressionAttributeNames": { "#s": "status" },
+                "ExpressionAttributeValues": {
+                ":s": { "S": "FAILED" },
+                ":e": { "S.$": "States.JsonToString($.error)" },
+                ":t": { "S.$": "$$.State.EnteredTime" }
+                }
+            },
+            "ResultPath": "$.dynamoResult",
+            "Next": "SendToDLQ"
+            },
+            "SendToDLQ": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::sqs:sendMessage",
+            "Parameters": {
+                "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868976171/sales-ingestion-dlq",
+                "MessageBody": {
+                "bucket.$":   "$.bucket",
+                "key.$":      "$.key",
+                "file_key.$": "$.file_key"
+                }
+            },
+            "End": true
+            }
+          ```
+    - The key change is adding ```"ResultPath": "$.dynamoResult"``` to ```UpdateFailure```. Without this, ```UpdateFailure```'s output replaces the entire state with the DynamoDB response, wiping out ```$.bucket```, ```$.key```, and ```$.file_key```. When ```SendToDLQ``` then tries to read ```$.bucket``` it gets null and throws.
+    - With ```"ResultPath": "$.dynamoResult"```, the DynamoDB response is written to ```$.dynamoResult``` and the rest of the original state including ```$.bucket```, ```$.key```, ```$.file_key``` is preserved for ```SendToDLQ``` to read correctly.
+#### Fixed code (orchestrate_data_ingestion step function)
+```json
+{
+  "Comment": "Glue ETL Orchestration with DynamoDB Tracking",
+  "StartAt": "ProcessFiles",
+  "States": {
+    "ProcessFiles": {
+      "Type": "Map",
+      "ItemsPath": "$.files",
+      "MaxConcurrency": 2,
+      "Iterator": {
+        "StartAt": "RunGlueJob",
+        "States": {
+          "RunGlueJob": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::glue:startJobRun.sync",
+            "Parameters": {
+              "JobName": "ingest_sales_data",
+              "Arguments": {
+                "--source_bucket.$": "$.bucket",
+                "--source_key.$": "$.key"
+              }
+            },
+            "ResultPath": "$.glueResult",
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Glue.ConcurrentRunsExceededException"
+                ],
+                "IntervalSeconds": 60,
+                "MaxAttempts": 10,
+                "BackoffRate": 1.5
+              },
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "IntervalSeconds": 30,
+                "MaxAttempts": 2,
+                "BackoffRate": 2
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "ResultPath": "$.error",
+                "Next": "UpdateFailure"
+              }
+            ],
+            "Next": "UpdateSuccess"
+          },
+          "UpdateSuccess": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Parameters": {
+              "TableName": "file_processing_registry",
+              "Key": {
+                "file_key": {
+                  "S.$": "$.file_key"
+                }
+              },
+              "UpdateExpression": "SET #s = :s, updated_at = :t",
+              "ExpressionAttributeNames": {
+                "#s": "status"
+              },
+              "ExpressionAttributeValues": {
+                ":s": {
+                  "S": "SUCCESS"
+                },
+                ":t": {
+                  "S.$": "$$.State.EnteredTime"
+                }
+              }
+            },
+            "End": true
+          },
+          "UpdateFailure": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Parameters": {
+              "TableName": "file_processing_registry",
+              "Key": {
+                "file_key": {
+                  "S.$": "$.file_key"
+                }
+              },
+              "UpdateExpression": "SET #s = :s, error_message = :e, updated_at = :t",
+              "ExpressionAttributeNames": {
+                "#s": "status"
+              },
+              "ExpressionAttributeValues": {
+                ":s": {
+                  "S": "FAILED"
+                },
+                ":e": {
+                  "S.$": "States.JsonToString($.error)"
+                },
+                ":t": {
+                  "S.$": "$$.State.EnteredTime"
+                }
+              }
+            },
+            "ResultPath": "$.dynamoResult",
+            "Next": "SendToDLQ"
+          },
+          "SendToDLQ": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::sqs:sendMessage",
+            "Parameters": {
+              "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868976171/sales-ingestion-dlq",
+              "MessageBody": {
+                "bucket.$": "$.bucket",
+                "key.$": "$.key",
+                "file_key.$": "$.file_key"
+              }
+            },
+            "End": true
+          }
+        }
+      },
+      "End": true
+    }
+  }
+}
+```
 
 
 

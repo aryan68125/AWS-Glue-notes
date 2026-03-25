@@ -5155,34 +5155,7 @@ Solution :
 
 
 
-# TODO tomorrows task START FROM HERE
-```bash
-StepFn
-   ↓
-Check DynamoDB
-   ↓
-IF processed → skip
-IF not → run Glue → mark DONE
-```
 
-This gives:
-- idempotency
-- replay safety
-- full audit
-- production-grade
-
-
-🔹 Recommended Schema
-
-Partition key:
-
-file_key (string)
-
-Attributes:
-
-status (RUNNING / DONE / FAILED)
-execution_id
-timestamp
 
 
 

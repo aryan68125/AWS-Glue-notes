@@ -3999,6 +3999,7 @@ You can use:
                 ]
             }
           ```
+
 #### Lambda function (StartStateFunction)
 - ```python
     import json
@@ -4115,6 +4116,8 @@ You can use:
     - After processing all records in the batch, if there is at least one genuinely new file, it fires ```orchestrate_data_ingestion``` with the list of new files as input. Each file object in the list contains ```bucket```, ```key```, and ```file_key``` all three are needed downstream: ```bucket``` and ```key``` go to Glue, ```file_key``` goes to DynamoDB updates in the Step Function.
     - If ```files``` is empty (every record in the batch was a duplicate), the Step Function is never triggered at all. No compute wasted.
 - The Lambda is intentionally doing only two things: duplicate filtering and Step Function invocation. It is not running Glue, not doing transformation, not writing success/failure status. It just decides whether a file deserves to enter the pipeline at all, creates the initial DynamoDB record as a lock, and hands off. Everything else happens inside the Step Function.
+- For more information about how the lamdba function works refer to this video : https://youtu.be/XFGSuj83wdc
+
 #### Step function (orchestrate_data_ingestion)
 - Attach this permissions to IAM role 
     - ![orchestrate_data_ingestion_2](images/production_grade_glue_version5_dynamo_db/step_functions/orchestrate_data_ingestion_2.png)
@@ -4268,6 +4271,7 @@ You can use:
 - The third addition is that SendToDLQ's MessageBody now explicitly includes file_key alongside bucket and key. This is what makes the replay_failed_ingestion Step Function work correctly — when it reads a message from the DLQ and needs to call dynamodb:updateItem, it now has the file_key to use as the partition key lookup.
 - This version update brings 
     - ```Step Function = orchestrator + state updater```
+
 #### AWS Glue ETL (ingest_sales_data)
 - Create an IAM role called ```AWSGlueRole``` and give appropriate permissions so that AWS glue ETL can function properly
     - Add permissions 
@@ -4579,6 +4583,7 @@ job.commit()
         - Finally job.commit() tells Glue the job succeeded cleanly.
 - How failure flows back to the rest of the pipeline?
     - Any ```raise``` in this script causes the Glue job to exit with a failed status. The Step Function is waiting with ```glue:startJobRun.sync```, so it detects the failure immediately and routes to ```UpdateFailure``` which writes ```status = FAILED``` and the error message to DynamoDB then sends the event to the DLQ. From there your ```replay_failed_ingestion``` Step Function can pick it up later once the underlying problem is fixed.
+
 #### DynamoDB setup
 - ![dynamo_db_1](images/production_grade_glue_version5_dynamo_db/dynamo_db/dynamo_db_1.png)
 - ![dynamo_db_2](images/production_grade_glue_version5_dynamo_db/dynamo_db/dynamo_db_2.png)
@@ -4592,6 +4597,12 @@ job.commit()
 - Things to remember :
     - Partition key should be set to ```file_key```
     - This is the command used to query the data present in the dynamoDB ```aws dynamodb scan --table-name file_processing_registry```
+- Theory :
+    - Partition key : A unique identifier that determines the item's physical storage location through hashing.
+    - Sort keys (OPTIONAL) : It is a secondary attribute which enables ordering and range queries within a partition.
+    - Primary key : ```{partition_key}:{sort_key}```
+- For more information on DynamoDB refer to this video : https://youtu.be/2X2SO3Y-af8?si=8HLw7LvQEV_TEG-B   
+
 ### Issues I faced during Implementation phase for version 5
 #### The issue I was facing is that ```UpdateFailure``` is working correctly ```status = FAILED``` and ```error_message``` is polulated in dynamoDB but the DLQ is empty. This happens when there is failure in the execution AWS glue ETL pipeline. (orchestrate_data_ingestion step function related bug)
 Explainaing what is happening : 

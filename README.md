@@ -3637,7 +3637,7 @@ You can use:
                 └─────────────────────────┘
 ```
 
-### Implementation phase for version 5
+## Implementation phase for version 5
 #### S3 bucket related settings 
 - Set the setting related to sending the events to the event bridge in this source S3 bucket like as shown below 
 ![source_bucket](images/production_grade_glue_version5_dynamo_db/S3/source_bucket.png)
@@ -5142,36 +5142,9 @@ Solution :
 }
 ```
 
-#### GAPs that I need to fix TODO : Tomorrow 
-Search for this  
-- I also want to insert the sqs event message that is being saved in DLQ to be inserted in dynamoDB so that I can prevent the messages from being lost.  at the event of failure
-- In this chat : https://claude.ai/chat/04ebe7b7-632d-4a52-94eb-5e66fb0d933b 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# TODO 
-## further improvements in implementation version 5
-Let me read the complete Version 5 implementation carefully before answering.Good, I have read everything carefully. Here are the genuine data engineering improvements, grouped by priority.
-
----
-
-## High priority — these affect correctness and reliability
+## Implementation : (Version 6)
+### GAPs that I need to fix that were present in Implementation of version 5 
+#### High priority — these affect correctness and reliability
 
 **1. Lambda idempotency permanently blocks `FAILED` files on re-upload**
 
@@ -5243,7 +5216,7 @@ After `replay_failed_ingestion` reads a message via `ReceiveFromDLQ`, that messa
 
 ---
 
-## Medium priority — these affect observability and operational quality
+#### Medium priority — these affect observability and operational quality
 
 **5. No `row_count` written to DynamoDB after successful ingestion**
 
@@ -5283,9 +5256,7 @@ raw_lines = spark.read.text(f"s3://{source_bucket}/{source_key}").limit(1000).co
 
 For corruption detection you typically only need to scan a representative sample rather than every row.
 
----
-
-## Lower priority — these are good engineering hygiene
+#### Lower priority — these are good engineering hygiene
 
 **9. `AmazonSQSFullAccess` on the replay Step Function role is too broad**
 
@@ -5311,6 +5282,26 @@ dynamodb.put_item(
     ...
 )
 ```
+
+Search for this  
+- I also want to insert the sqs event message that is being saved in DLQ to be inserted in dynamoDB so that I can prevent the messages from being lost.  at the event of failure
+- In this chat : https://claude.ai/chat/04ebe7b7-632d-4a52-94eb-5e66fb0d933b 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

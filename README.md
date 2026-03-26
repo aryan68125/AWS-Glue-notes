@@ -4577,8 +4577,8 @@ job.commit()
     - Stage 6 — Deduplication
         - ```dropDuplicates()``` with no arguments compares every column in every row. If two rows are completely identical across all columns, one gets dropped. This prevents duplicate rows from landing in the Silver layer if the upstream system accidentally sent the same record twice.
     - Stage 7 — Data quality evaluation
-        - ```EvaluateDataQuality``` runs a formal ruleset against the data before writing it anywhere. The rules check that the column count is exactly 16 (schema drift detection), that key numeric columns have no nulls, that no numeric column has negative values, and that ```product_id``` is unique. This is wrapped in a ```try/except``` — if the rules fail, it raises ```RuntimeError``` explicitly. This is important because without the explicit raise, Glue might log the DQ failure but continue writing bad data to S3.
-    - Stage 8 — Write to Silver S3 and update catalog
+        - ```EvaluateDataQuality``` runs a formal ruleset against the data before writing it anywhere. The rules check that the column count is exactly 16 (schema drift detection), that key numeric columns have no nulls, that no numeric column has negative values, and that ```product_id``` is unique. This is wrapped in a ```try/except``` if the rules fail, it raises ```RuntimeError``` explicitly. This is important because without the explicit raise, Glue might log the DQ failure but continue writing bad data to S3.
+    - Stage 8 Write to Silver S3 and update catalog
         - If all checks pass, the data is written to ```s3://data-sink-one/silver_layer/sales_data/``` as Snappy-compressed Parquet files, partitioned by ```category```. The ```enableUpdateCatalog=True``` and ```setCatalogInfo``` call means Glue simultaneously registers or updates the table ```silver_table_sales_data``` in the Glue Data Catalog. This is what makes the data immediately queryable in Athena without needing to run a crawler separately.
         - Finally job.commit() tells Glue the job succeeded cleanly.
 - How failure flows back to the rest of the pipeline?
@@ -4619,8 +4619,8 @@ Explainaing what is happening :
         "file_key.$": "$.file_key"
         }
       ```
-- These paths — ```$.bucket```, ```$.key```, ```$.file_key``` came from the Map iterator input. But after ```RunGlueJob``` fails with ```"ResultPath": "$.error"```, the error gets written to ```$.error```. At this point the Step Function state still has ```$.bucket```, ```$.key```, ```$.file_key``` available from the original Map item input.
-- However, look at your Glue runs in Image 1 — they are all failing in about 1 minute, and the ```States.ALL``` retry fires 2 times with 30 second intervals before the Catch block runs. During those retries, the ```ResultPath``` behaviour can shift the state. More critically — look at the failure time: ```17:17:37``` to ```17:18:47``` is only 1m 2s, which means the retries may not be completing cleanly, causing the input state to be in an unexpected shape when ```UpdateFailure``` runs.
+- These paths ```$.bucket```, ```$.key```, ```$.file_key``` came from the Map iterator input. But after ```RunGlueJob``` fails with ```"ResultPath": "$.error"```, the error gets written to ```$.error```. At this point the Step Function state still has ```$.bucket```, ```$.key```, ```$.file_key``` available from the original Map item input.
+- However, look at your Glue runs in Image 1 they are all failing in about 1 minute, and the ```States.ALL``` retry fires 2 times with 30 second intervals before the Catch block runs. During those retries, the ```ResultPath``` behaviour can shift the state. More critically look at the failure time: ```17:17:37``` to ```17:18:47``` is only 1m 2s, which means the retries may not be completing cleanly, causing the input state to be in an unexpected shape when ```UpdateFailure``` runs.
 - The most likely cause is this: SendToDLQ is throwing because ```$.bucket```, ```$.key```, or ```$.file_key``` is resolving to null in the state context after the retry/catch cycle. You can confirm this by going to the Step Function execution for the ```17:17:37``` run and checking whether ```SendToDLQ``` appears in the execution history at all, and what error it shows.
 
 Solution : 
@@ -4801,7 +4801,7 @@ Solution :
 
 #### retry_count type mismatch (replay_failed_ingestion step function)
 Explainaing what is happening : 
-- The problem — DynamoDB Number type vs Step Functions string comparison
+- The problem DynamoDB Number type vs Step Functions string comparison
 - When DynamoDB returns a Number attribute, it comes back in the Step Functions state as a JSON object like this:
     - ```json
       "retry_count": { "N": "0" }
@@ -4855,7 +4855,7 @@ An error occurred while executing the state 'RunGlueJob' (entered at the event i
     - There is no ```ResultPath```. When a Task state has no ```ResultPath```, the AWS SDK response from DynamoDB completely replaces the entire state input. So when ```RunGlueJob``` runs, the state no longer contains ```$.parsed.body.bucket``` it only contains the DynamoDB HTTP response object you can see in the error.
 
 Solution : 
-- Add ```"ResultPath": "$.incrementResult"``` to ```IncrementRetry``` so the DynamoDB response is written to a separate field and the original state — including ```$.parsed.body.bucket```, ```$.parsed.body.key```, ```$.parsed.body.file_key``` — is preserved:
+- Add ```"ResultPath": "$.incrementResult"``` to ```IncrementRetry``` so the DynamoDB response is written to a separate field and the original state including ```$.parsed.body.bucket```, ```$.parsed.body.key```, ```$.parsed.body.file_key``` is preserved:
     - ```json
         "IncrementRetry": {
         "Type": "Task",
@@ -5144,11 +5144,11 @@ Solution :
 
 ## Implementation : (Version 6)
 ### GAPs that I need to fix that were present in Implementation of version 5 
-#### High priority — these affect correctness and reliability
+#### High priority these affect correctness and reliability
 
 **1. Lambda idempotency permanently blocks `FAILED` files on re-upload**
 
-The `put_item` with `attribute_not_exists(file_key)` blocks any file whose `file_key` already exists in DynamoDB — regardless of whether status is `SUCCESS`, `FAILED`, or `IN_PROGRESS`. This means if a corrupted file fails and a corrected version is uploaded with the same filename, Lambda will silently skip it forever. The fix is to check status first — only permanently block `SUCCESS`, allow `FAILED` records to be overwritten:
+The `put_item` with `attribute_not_exists(file_key)` blocks any file whose `file_key` already exists in DynamoDB regardless of whether status is `SUCCESS`, `FAILED`, or `IN_PROGRESS`. This means if a corrupted file fails and a corrected version is uploaded with the same filename, Lambda will silently skip it forever. The fix is to check status first — only permanently block `SUCCESS`, allow `FAILED` records to be overwritten:
 
 ```python
 existing = dynamodb.get_item(
@@ -5161,7 +5161,7 @@ if item and item.get("status", {}).get("S") == "SUCCESS":
     print(f"Already succeeded, skipping: {file_key}")
     continue
 
-# New file or previously failed — allow through
+# New file or previously failed allow through
 try:
     dynamodb.put_item(
         TableName=TABLE_NAME,
@@ -5180,9 +5180,9 @@ except dynamodb.exceptions.ConditionalCheckFailedException:
     print(f"Currently IN_PROGRESS, skipping: {file_key}")
 ```
 
-**2. `DQFailureSilent` — data quality runs but the job can still write bad data**
+**2. `DQFailureSilent` data quality runs but the job can still write bad data**
 
-Your `EvaluateDataQuality` is wrapped in a `try/except` that raises `RuntimeError` on failure which is correct. However `EvaluateDataQuality().process_rows()` with `"strategy": "BEST_EFFORT"` logs DQ results but does not fail the Glue job on rule violations by itself — it depends entirely on your `try/except` catching the exception. The problem is that `process_rows` with `BEST_EFFORT` does not always throw even when rules fail — it publishes metrics and continues. This means data that fails the `IsUnique "product_id"` or `ColumnCount = 16` check can silently pass through to the Silver layer. Change the strategy:
+Your `EvaluateDataQuality` is wrapped in a `try/except` that raises `RuntimeError` on failure which is correct. However `EvaluateDataQuality().process_rows()` with `"strategy": "BEST_EFFORT"` logs DQ results but does not fail the Glue job on rule violations by itself it depends entirely on your `try/except` catching the exception. The problem is that `process_rows` with `BEST_EFFORT` does not always throw even when rules fail it publishes metrics and continues. This means data that fails the `IsUnique "product_id"` or `ColumnCount = 16` check can silently pass through to the Silver layer. Change the strategy:
 
 ```python
 EvaluateDataQuality().process_rows(
@@ -5202,13 +5202,13 @@ EvaluateDataQuality().process_rows(
 
 **3. `dropDuplicates()` with no arguments is too aggressive**
 
-Your deduplication uses `df_clean.dropDuplicates()` which compares every single column. This means two rows that have identical product data but different `review_id` values will both be kept — which is correct. But two rows that are truly identical across all 16 columns will lose one copy — which is also correct. The real problem is that `dropDuplicates()` on a large DataFrame triggers a full shuffle across the entire Spark cluster, which is very expensive. For this dataset the correct key for deduplication is `review_id` since that is the natural unique identifier per review:
+Your deduplication uses `df_clean.dropDuplicates()` which compares every single column. This means two rows that have identical product data but different `review_id` values will both be kept which is correct. But two rows that are truly identical across all 16 columns will lose one copy which is also correct. The real problem is that `dropDuplicates()` on a large DataFrame triggers a full shuffle across the entire Spark cluster, which is very expensive. For this dataset the correct key for deduplication is `review_id` since that is the natural unique identifier per review:
 
 ```python
 deduped_df = df_clean.dropDuplicates(["review_id"])
 ```
 
-This is both semantically correct — you are deduplicating on the business key — and significantly faster because Spark can partition by `review_id` rather than hashing all 16 columns.
+This is both semantically correct you are deduplicating on the business key and significantly faster because Spark can partition by `review_id` rather than hashing all 16 columns.
 
 **4. `sales-ingestion-dlq` visibility timeout is 12 hours**
 
@@ -5216,11 +5216,11 @@ After `replay_failed_ingestion` reads a message via `ReceiveFromDLQ`, that messa
 
 ---
 
-#### Medium priority — these affect observability and operational quality
+#### Medium priority these affect observability and operational quality
 
 **5. No `row_count` written to DynamoDB after successful ingestion**
 
-Your DynamoDB schema in the proposed architecture diagram shows `row_count` as an attribute, but the `UpdateSuccess` state only writes `status` and `updated_at`. You never capture how many rows were actually ingested. This is a significant gap for a data platform — without row counts you cannot detect silent data loss (a file that processed successfully but produced 0 rows, or a file that should have 500 rows but only produced 50). Add a row count capture in the Glue script:
+Your DynamoDB schema in the proposed architecture diagram shows `row_count` as an attribute, but the `UpdateSuccess` state only writes `status` and `updated_at`. You never capture how many rows were actually ingested. This is a significant gap for a data platform without row counts you cannot detect silent data loss (a file that processed successfully but produced 0 rows, or a file that should have 500 rows but only produced 50). Add a row count capture in the Glue script:
 
 ```python
 row_count = deduped_df.count()
@@ -5231,7 +5231,7 @@ Then pass it as a Glue job metric or as a separate DynamoDB update. One way is t
 
 **6. No CloudWatch alerting on DLQ depth**
 
-There is no monitoring documented. In production the most critical metric to alert on is `ApproximateNumberOfMessagesVisible` on `sales-ingestion-dlq` — if this grows it means files are failing faster than they are being replayed. A simple CloudWatch alarm that fires when DLQ message count exceeds 0 would give you immediate visibility. Similarly, a CloudWatch alarm on Glue job failures and Step Function execution failures would complete the observability picture.
+There is no monitoring documented. In production the most critical metric to alert on is `ApproximateNumberOfMessagesVisible` on `sales-ingestion-dlq` if this grows it means files are failing faster than they are being replayed. A simple CloudWatch alarm that fires when DLQ message count exceeds 0 would give you immediate visibility. Similarly, a CloudWatch alarm on Glue job failures and Step Function execution failures would complete the observability picture.
 
 **7. Debug print statements left in the Glue script**
 
@@ -5244,7 +5244,7 @@ print("Glue Visual ETL | DEBUG schema:", df.schema)
 print("Glue Visual ETL | DEBUG sample rows:", df.limit(2).toPandas())
 ```
 
-The `df.limit(2).toPandas()` line is particularly costly — it materialises a Pandas DataFrame on the driver node and prints raw data values to CloudWatch logs. This is a privacy concern if the data contains PII and a cost concern since it triggers a Spark action. Remove or gate these behind a debug flag.
+The `df.limit(2).toPandas()` line is particularly costly it materialises a Pandas DataFrame on the driver node and prints raw data values to CloudWatch logs. This is a privacy concern if the data contains PII and a cost concern since it triggers a Spark action. Remove or gate these behind a debug flag.
 
 **8. `raw_lines = spark.read.text(...).collect()` loads entire file to driver**
 
@@ -5256,7 +5256,7 @@ raw_lines = spark.read.text(f"s3://{source_bucket}/{source_key}").limit(1000).co
 
 For corruption detection you typically only need to scan a representative sample rather than every row.
 
-#### Lower priority — these are good engineering hygiene
+#### Lower priority these are good engineering hygiene
 
 **9. `AmazonSQSFullAccess` on the replay Step Function role is too broad**
 
@@ -5264,7 +5264,7 @@ The IAM role for `replay_failed_ingestion` uses `AmazonSQSFullAccess`. This gran
 
 **10. No TTL on DynamoDB records**
 
-The `file_processing_registry` table will grow forever — every file ever processed keeps a permanent record. For a data engineering use case you typically only need records for the last 30–90 days for audit purposes. Add a `ttl` attribute when writing records in Lambda and enable DynamoDB TTL on that attribute. This keeps the table lean and reduces read costs over time:
+The `file_processing_registry` table will grow forever every file ever processed keeps a permanent record. For a data engineering use case you typically only need records for the last 30–90 days for audit purposes. Add a `ttl` attribute when writing records in Lambda and enable DynamoDB TTL on that attribute. This keeps the table lean and reduces read costs over time:
 
 ```python
 import time
@@ -5283,9 +5283,285 @@ dynamodb.put_item(
 )
 ```
 
-Search for this  
-- I also want to insert the sqs event message that is being saved in DLQ to be inserted in dynamoDB so that I can prevent the messages from being lost.  at the event of failure
-- In this chat : https://claude.ai/chat/04ebe7b7-632d-4a52-94eb-5e66fb0d933b 
+### Implementation for version 6:
+- With this implementation I am aiming to close all the gaps that are currently present in the version 5 implementation.
+
+#### S3 bucket
+![s3_event_bridge_setup](images/production_grade_implementation_version_6/S3/s3_event_bridge_setup.png)
+- This setup allows source S3 bucket to send events to event bridge.
+
+#### SQS 
+
+**(FileProcessingQueue.fifo)**
+- ![FileProcessingQueue.fifo_1](images/production_grade_implementation_version_6/SQS/FileProcessingQueue.fifo_1.png)
+- ![FileProcessingQueue.fifo_2](images/production_grade_implementation_version_6/SQS/FileProcessingQueue.fifo_2.png)
+- ![FileProcessingQueue.fifo_3](images/production_grade_implementation_version_6/SQS/FileProcessingQueue.fifo_3.png)
+- Access Policy used : 
+    - ```json
+        {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+            "Sid": "AllowEventBridgeToSend",
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "events.amazonaws.com"
+            },
+            "Action": "sqs:SendMessage",
+            "Resource": "arn:aws:sqs:ap-south-1:406868976171:FileProcessingQueue",
+            "Condition": {
+                "ArnEquals": {
+                "aws:SourceArn": "arn:aws:events:ap-south-1:406868976171:rule/ActivateLambdaFuncEventBridgeRules"
+                }
+            }
+            }
+        ]
+        }
+      ```
+
+**(sales-ingestion-dlq)**
+- ![sales-ingestion-dlq_1](images/production_grade_implementation_version_6/SQS/sales-ingestion-dlq_1.png)
+- ![sales-ingestion-dlq_2](images/production_grade_implementation_version_6/SQS/sales-ingestion-dlq_2.png)
+- ![sales-ingestion-dlq_3](images/production_grade_implementation_version_6/SQS/sales-ingestion-dlq_3.png)
+- Access Policy used : 
+    - ```json
+        {
+        "Version": "2012-10-17",
+        "Id": "__default_policy_ID",
+        "Statement": [
+            {
+            "Sid": "__owner_statement",
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::406868976171:root"
+            },
+            "Action": "SQS:*",
+            "Resource": "arn:aws:sqs:ap-south-1:406868976171:sales-ingestion-dlq"
+            },
+            {
+            "Sid": "AllowEventBridgeToSendMessage",
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "events.amazonaws.com"
+            },
+            "Action": "sqs:SendMessage",
+            "Resource": "arn:aws:sqs:ap-south-1:406868976171:sales-ingestion-dlq",
+            "Condition": {
+                "ArnEquals": {
+                "aws:SourceArn": "arn:aws:events:ap-south-1:406868976171:rule/ActivateLambdaFuncEventBridgeRules"
+                }
+            }
+            },
+            {
+            "Sid": "AWSEvents_ActivateLambdaFuncEventBridgeRules_dlq_41c9320f-edd2-4fde-ad71-2985e68b1d7c",
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "events.amazonaws.com"
+            },
+            "Action": "sqs:SendMessage",
+            "Resource": "arn:aws:sqs:ap-south-1:406868976171:sales-ingestion-dlq",
+            "Condition": {
+                "ArnEquals": {
+                "aws:SourceArn": "arn:aws:events:ap-south-1:406868976171:rule/ActivateLambdaFuncEventBridgeRules"
+                }
+            }
+            }
+        ]
+        }
+      ```
+- Visibility timeout is an SQS setting that controls how long a message stays hidden from other consumers after it has been received by one consumer. When Lambda or a Step Function reads a message from SQS, the queue does not delete it immediately instead it hides it for the duration of the visibility timeout. The expectation is that the consumer will finish processing and explicitly delete the message before the timeout expires. If the consumer crashes, hangs, or fails before deleting it, the timeout expires and SQS makes the message visible again so another consumer can retry it.
+- Setting this value correctly matters because the consequences of getting it wrong go in both directions.
+    - If the timeout is too short, the message becomes visible again before the consumer has finished processing it. A second consumer picks it up while the first is still running, and now two instances are processing the same message simultaneously. In this pipeline that means two Lambda invocations racing to write the same file_key to DynamoDB, or two replay executions both trying to run Glue against the same file at the same time. The DynamoDB idempotency guard in Lambda catches most of these cases, but it introduces an unnecessary race condition that the correct timeout setting eliminates entirely.
+    - If the timeout is too long, a different problem emerges. When replay_failed_ingestion reads a message from sales-ingestion-dlq to retry a failed file, SQS hides that message for the full duration of the timeout regardless of whether the replay succeeded or failed. If the replay fails again and UpdateFailure ends with "End": true without deleting the message, the message is still invisible until the timeout expires. A data engineer trying to trigger another replay immediately after a failure will see an empty queue and have to wait for the full timeout window before the message reappears.
+
+#### Lambda function
+- IAM role used for this Lamdba function ```TriggerStepFunctionRoleForLambdaFunc```
+    - Custom policies attached to this role 
+        - AllowLambdaToAccessSQSAndStepFunction
+            - ```json
+              {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "states:StartExecution"
+                            ],
+                            "Resource": "arn:aws:states:ap-south-1:406868976171:stateMachine:orchestrate_data_ingestion"
+                        },
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "sqs:ReceiveMessage",
+                                "sqs:DeleteMessage",
+                                "sqs:GetQueueAttributes"
+                            ],
+                            "Resource": "arn:aws:sqs:ap-south-1:406868976171:FileProcessingQueue.fifo"
+                        },
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "logs:CreateLogGroup",
+                                "logs:CreateLogStream",
+                                "logs:PutLogEvents"
+                            ],
+                            "Resource": "*"
+                        }
+                    ]
+                }
+              ```
+        - DynamoDbAccessPolicyForLambdaFunction
+            - ```json
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "DynamoDbAccessPolicyForLambdaFunction",
+                            "Effect": "Allow",
+                            "Action": [
+                                "dynamodb:PutItem",
+                                "dynamodb:GetItem",
+                                "dynamodb:UpdateItem"
+                            ],
+                            "Resource": "arn:aws:dynamodb:ap-south-1:406868976171:table/file_processing_registry"
+                        }
+                    ]
+                }
+              ```
+- Improved lambda function code : 
+    - ```python
+        import json
+        import boto3
+        import uuid
+        import time
+        from datetime import datetime, timezone, timedelta
+
+        sf = boto3.client("stepfunctions")
+        dynamodb = boto3.client("dynamodb")
+
+        STATE_MACHINE_ARN = "arn:aws:states:ap-south-1:406868976171:stateMachine:orchestrate_data_ingestion"
+        TABLE_NAME = "file_processing_registry"
+
+        def lambda_handler(event, context):
+
+            execution_id = str(uuid.uuid4())[:8]
+
+            IST = timezone(timedelta(hours=5, minutes=30))
+            timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S %Z")
+
+            # TTL: 30 days from now (Unix timestamp)
+            ttl_value = int(time.time()) + (30 * 24 * 60 * 60)
+
+            print(f"\n===== Lambda Invocation START =====")
+            print(f"ExecutionID: {execution_id}")
+            print(f"Timestamp: {timestamp}")
+            print("Full Event From SQS:", json.dumps(event))
+            expiry_date = datetime.fromtimestamp(ttl_value, tz=timezone(timedelta(hours=5, minutes=30))).strftime("%Y-%m-%d %H:%M:%S IST")
+            print(f"The record will be kept in DynamoDB for {expiry_date}")
+            print("===================================\n")
+
+            files = []
+
+            for record in event["Records"]:
+                body = json.loads(record["body"])
+
+                bucket = body["detail"]["bucket"]["name"]
+                key = body["detail"]["object"]["key"]
+
+                file_key = f"s3://{bucket}/{key}"
+
+                # Check for status of file before enforcing idepotency
+                # Check if a record already exists and what its status is
+                existing = dynamodb.get_item(
+                    TableName=TABLE_NAME,
+                    Key={"file_key": {"S": file_key}}
+                )
+                item = existing.get("Item")
+
+                if item:
+                    current_status = item.get("status", {}).get("S", "")
+
+                    if current_status == "SUCCESS":
+                        # File already successfully ingested — block permanently
+                        print(f"Already succeeded, skipping: {file_key}")
+                        continue
+
+                    if current_status == "IN_PROGRESS":
+                        # Another Lambda instance is currently processing this file
+                        print(f"Already in progress, skipping: {file_key}")
+                        continue
+                    # status == FAILED — allow through, reset the record for retry
+                    print(f"Previously failed, allowing re-upload retry: {file_key}")
+
+                try:
+                    # Idempotency check (CRITICAL)
+                    dynamodb.put_item(
+                        TableName=TABLE_NAME,
+                        Item={
+                            "file_key":    {"S": file_key},
+                            "status":      {"S": "IN_PROGRESS"},
+                            "retry_count": {"N": "0"},
+                            "created_at":  {"S": timestamp},
+                            "ttl":         {"N": str(ttl_value)}
+                        },
+                        ConditionExpression="attribute_not_exists(file_key) OR #s = :failed",
+                        ExpressionAttributeNames={"#s": "status"},
+                        ExpressionAttributeValues={":failed": {"S": "FAILED"}}
+                    )
+
+                    # Only add if it's NOT duplicate
+                    files.append({
+                        "bucket": bucket,
+                        "key": key,
+                        "file_key": file_key
+                    })
+
+                    print(f"Accepted file: {file_key}")
+
+                except dynamodb.exceptions.ConditionalCheckFailedException:
+                    # This only fires if another Lambda instance wrote IN_PROGRESS
+                    # between our get_item check above and this put_item — a rare
+                    # race condition that is now safely handled
+                    print(f"Concurrent write detected, skipping: {file_key}")
+
+            print("Files to process:", files)
+
+            # Only trigger StepFn if there are valid files
+            if files:
+                sf.start_execution(
+                    stateMachineArn=STATE_MACHINE_ARN,
+                    input=json.dumps({"files": files})
+                )
+                print("Step Function triggered")
+            else:
+                print("No new files to process")
+
+            return {"status": "ok"}
+      ```
+    - This improved code Fixes 
+        - Gap 1: Idempotency permanently blocks FAILED files
+            - Older lambda function code in version 5 uses this ```ConditionExpression="attribute_not_exists(file_key)"```
+            - This blocks any file that already has a DynamoDB record regardless of whether its status is SUCCESS, FAILED, or IN_PROGRESS. So if sales_data_4.csv failed and you upload a corrected version, Lambda sees the existing record and skips it forever with "Duplicate skipped". The only way to recover is to manually add a DLQ message via the SQS console.
+            - The fix changes the logic so that only SUCCESS files are permanently blocked. FAILED files are allowed back in because the corrected re-upload is a legitimate recovery path. IN_PROGRESS files are blocked because another Lambda instance is already processing them.
+            - The condition changes from a simple attribute_not_exists to a two-step check first read the record, then decide what to do based on its status.
+            - **Why are we doing this?**
+                - The core reason comes down to one question: who should be responsible for recovering a failed file a human manually intervening in the system, or the system recovering itself automatically?
+                - In production data engineering, the answer is always the system. Here is why.
+                - What happens without this fix?
+                    - A data engineer at a company receives an alert that sales_data_4.csv failed ingestion because it was corrupted. They fix the file and upload the corrected version to S3. From their perspective, the problem is solved the correct file is now in S3.
+                    - But nothing happens. The pipeline is completely silent. The file sits in S3 forever, never ingested, never alerting again. The engineer has no feedback that their fix did not work. The downstream dashboard is missing that day's sales data and nobody knows why
+                    - Eventually someone notices the data gap, raises a ticket, and a senior engineer has to dig through CloudWatch logs, find the DynamoDB record, understand the visibility timeout, manually construct a JSON message, paste it into the SQS console, and trigger the replay. This takes hours and requires deep knowledge of the pipeline internals.
+                - What happens with the fix?
+                    - The same engineer fixes the file and uploads the corrected version to S3. The pipeline detects the new upload, sees the existing FAILED record in DynamoDB, resets it to IN_PROGRESS, and triggers the Step Function automatically. Within 2 minutes the file is ingested and the dashboard is updated. The engineer never had to touch SQS, DynamoDB, or CloudWatch.
+                - The deeper principle systems should be self-healing.
+                    - In data engineering there is a concept called operational burden the amount of human intervention required to keep a pipeline running. Every manual step you require from an operator is a point of failure. Operators make mistakes, forget steps, are on vacation, or simply do not know what to do. A well-designed pipeline minimises operational burden by making the happy path automatic and the recovery path equally automatic.
+                    - The re-upload recovery path costs nothing to implement it is a change to one conditional expression in Lambda. But it eliminates an entire category of manual intervention that would otherwise be required every time a file fails and needs to be corrected.
+        - Gap 10: No TTL on DynamoDB records
+            - Your current put_item never sets a ttl attribute. Without TTL, every record stays in DynamoDB forever. After a year of daily ingestion your table has hundreds of records consuming read capacity on every scan, and you are paying for storage you do not need. DynamoDB's TTL feature automatically deletes expired items at no extra cost. Setting it to 90 days means you keep a full quarter of audit history while the table stays lean.
+- Lambda function SQS trigger related configurations
+    - ![lambda_1](images/production_grade_implementation_version_6/Lambda_functions/lambda_1.png)
+
+
 
 
 

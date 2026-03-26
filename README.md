@@ -5561,13 +5561,162 @@ dynamodb.put_item(
 - Lambda function SQS trigger related configurations
     - ![lambda_1](images/production_grade_implementation_version_6/Lambda_functions/lambda_1.png)
 
+#### State functions
+
+**orchestrate_data_ingestion state function :**
+- Improved orchestration state function
+    - ```json
+        {
+            "Comment": "Glue ETL Orchestration with DynamoDB Tracking",
+            "StartAt": "ProcessFiles",
+            "States": {
+                "ProcessFiles": {
+                "Type": "Map",
+                "ItemsPath": "$.files",
+                "MaxConcurrency": 2,
+                "Iterator": {
+                    "StartAt": "RunGlueJob",
+                    "States": {
+                    "RunGlueJob": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:states:::glue:startJobRun.sync",
+                        "Parameters": {
+                        "JobName": "ingest_sales_data",
+                        "Arguments": {
+                            "--source_bucket.$": "$.bucket",
+                            "--source_key.$": "$.key"
+                        }
+                        },
+                        "ResultPath": "$.glueResult",
+                        "Retry": [
+                        {
+                            "ErrorEquals": [
+                            "Glue.ConcurrentRunsExceededException"
+                            ],
+                            "IntervalSeconds": 60,
+                            "MaxAttempts": 10,
+                            "BackoffRate": 1.5
+                        },
+                        {
+                            "ErrorEquals": [
+                            "States.ALL"
+                            ],
+                            "IntervalSeconds": 30,
+                            "MaxAttempts": 2,
+                            "BackoffRate": 2
+                        }
+                        ],
+                        "Catch": [
+                        {
+                            "ErrorEquals": [
+                            "States.ALL"
+                            ],
+                            "ResultPath": "$.error",
+                            "Next": "UpdateFailure"
+                        }
+                        ],
+                        "Next": "UpdateSuccess"
+                    },
+                    "UpdateSuccess": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:states:::dynamodb:updateItem",
+                        "Parameters": {
+                        "TableName": "file_processing_registry",
+                        "Key": {
+                            "file_key": {
+                            "S.$": "$.file_key"
+                            }
+                        },
+                        "UpdateExpression": "SET #s = :s, updated_at = :t",
+                        "ExpressionAttributeNames": {
+                            "#s": "status"
+                        },
+                        "ExpressionAttributeValues": {
+                            ":s": {
+                            "S": "SUCCESS"
+                            },
+                            ":t": {
+                            "S.$": "$$.State.EnteredTime"
+                            }
+                        }
+                        },
+                        "End": true
+                    },
+                    "UpdateFailure": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:states:::dynamodb:updateItem",
+                        "Parameters": {
+                        "TableName": "file_processing_registry",
+                        "Key": {
+                            "file_key": {
+                            "S.$": "$.file_key"
+                            }
+                        },
+                        "UpdateExpression": "SET #s = :s, error_message = :e, updated_at = :t, dlq_event_message = :p",
+                        "ExpressionAttributeNames": {
+                            "#s": "status"
+                        },
+                        "ExpressionAttributeValues": {
+                            ":s": {
+                            "S": "FAILED"
+                            },
+                            ":e": {
+                            "S.$": "States.JsonToString($.error)"
+                            },
+                            ":t": {
+                            "S.$": "$$.State.EnteredTime"
+                            },
+                            ":p": {
+                            "M": {
+                                "bucket": {
+                                "S.$": "$.bucket"
+                                },
+                                "key": {
+                                "S.$": "$.key"
+                                },
+                                "file_key": {
+                                "S.$": "$.file_key"
+                                }
+                            }
+                            }
+                        }
+                        },
+                        "ResultPath": "$.dynamoResult",
+                        "Next": "SendToDLQ"
+                    },
+                    "SendToDLQ": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:states:::sqs:sendMessage",
+                        "Parameters": {
+                        "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/406868976171/sales-ingestion-dlq",
+                        "MessageBody": {
+                            "bucket.$": "$.bucket",
+                            "key.$": "$.key",
+                            "file_key.$": "$.file_key"
+                        }
+                        },
+                        "End": true
+                    }
+                    }
+                },
+                "End": true
+                }
+            }
+        }
+    ```
+
+**replay_failed_ingestion state function :**
 
 
-
-
-
-
-
+### Issues faced during the Implementation for version 6:
+#### ETL was not being invoked on file arrival in S3 bucket 
+- Before I explain why this was happening I want to show you something
+    - ![pending_messages_sqs_blockage](images/production_grade_implementation_version_6/SQS/pending_messages_sqs_blockage.png)  
+- Broken pipeline diagnosis
+    - ![pipeline_broken_chain_diagnosis_sqs](images/production_grade_implementation_version_6/SQS/pipeline_broken_chain_diagnosis_sqs.svg)
+    - This is the problem. FileProcessingQueue.fifo shows Messages available: 11 and Messages in flight: 1. These are stale messages from all your previous test uploads during cleanup. With a 30 minute visibility timeout, each time Lambda picks up a message and partially processes it, the message becomes invisible for 30 minutes before reappearing. Your new upload is just adding to an already-backed-up queue.
+- Solution : (Do not apply this in production)
+    - The fix is one click — go to SQS → FileProcessingQueue.fifo → click the Purge button at the top of the page. This instantly deletes all 12 stuck messages. Then re-upload your CSV file and the pipeline will run immediately.
 
 
 

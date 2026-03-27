@@ -5941,6 +5941,53 @@ dynamodb.put_item(
         }
         }
       ```
+    - It solves problems like
+        - Stale message in DLQ causes duplicate data processing : If someone manually adds a DLQ message for a file that already has status = SUCCESS in DynamoDB — perhaps by mistake, or because the DLQ message was never cleaned up — replay_failed_ingestion will read the message, see retry_count = 0 which is less than 3, increment it to 1, and run Glue again against a file that was already successfully ingested. The file gets processed a second time, and duplicate data lands in the Silver layer.
+        - Solution : add a ```CheckAlreadySucceeded``` state
+            - Add a Choice state immediately after ```CheckRetry``` that checks status before checking ```retry_count```
+            ```json
+            "CheckRetry": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:getItem",
+            "Parameters": {
+                "TableName": "file_processing_registry",
+                "Key": { "file_key": { "S.$": "$.parsed.body.file_key" } }
+            },
+            "ResultPath": "$.ddb",
+            "Next": "CheckAlreadySucceeded"
+            },
+            "CheckAlreadySucceeded": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                "Variable": "$.ddb.Item.status.S",
+                "StringEquals": "SUCCESS",
+                "Next": "SkipReplay"
+                }
+            ],
+            "Default": "EvaluateRetry"
+            },
+            "EvaluateRetry": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                "Variable": "$.ddb.Item.retry_count.N",
+                "StringLessThan": "3",
+                "Next": "IncrementRetry"
+                }
+            ],
+            "Default": "SkipReplay"
+            }
+            ```
+            - The flow becomes:
+                - ```bash
+                    CheckRetry → reads DynamoDB
+                        ↓
+                    CheckAlreadySucceeded
+                        ↓ status = SUCCESS  →  SkipReplay → DeleteMessage (remove stale DLQ message)
+                        ↓ status = FAILED   →  EvaluateRetry → check retry_count → IncrementRetry → RunGlueJob
+                  ```
+            - This means a stale DLQ message for an already-successful file gets silently cleaned up the message is deleted from the DLQ and nothing else happens. No duplicate Glue run, no duplicate data in Silver S3.
 
 #### AWS ETL pipeline 
 - Add IAM role with appropriate permissions for AWS glue ETL to work properly
@@ -6293,6 +6340,7 @@ dynamodb.put_item(
             - Why I decided to do this ?
                 - Row count is the simplest and most important data quality signal after successful ingestion. Without it, status = SUCCESS tells you the pipeline ran without errors — but it tells you nothing about whether the right amount of data actually landed.
                 - Consider three scenarios that ```status = SUCCESS``` cannot distinguish between. A file arrives with 489 rows and 489 rows land in Silver this is correct. A file arrives with 489 rows but a bug in the deduplication logic removes 400 of them as false duplicates this is a silent data loss that ```SUCCESS``` does not catch. A file arrives completely empty due to an upstream system error but passes all validation checks because an empty file with correct headers is technically valid this is also ```SUCCESS```.
+                - ```row_count``` in DynamoDB gives you one line of defence against all three scenarios. A data engineer scanning the table can immediately see that ```sales_data_2.csv``` landed 489 rows while ```sales_data_4.csv``` only landed 15 rows — which is correct because ```sales_data_4.csv``` only had 15 data rows. If ```sales_data_1.csv``` suddenly showed ```row_count = 0``` on a day when it normally shows 489, that is an immediate signal that something is wrong upstream before anyone has to query Athena or check S3.
     - Explaination :  ```BEST_EFFORT``` and ```STRICT``` are values for ```dataQualityResultsPublishing.strategy```. They control how and when results are published to CloudWatch.
         - ```BEST_EFFORT``` : publish results whenever possible, even if publishing itself fails. If the DQ evaluation encounters an internal error while trying to write metrics to CloudWatch, it swallows that error and lets the job continue. It is tolerant of publishing failures. If DQ rules are violated it still publishes the failure metrics but the job continues unless failureAction: "FAIL" is also set.
         - ```STRICT``` : publish results and if publishing itself fails, treat that as a hard error. If Glue cannot write DQ metrics to CloudWatch for any reason, it raises an exception immediately. It is intolerant of publishing failures. Like BEST_EFFORT, if DQ rules are violated it publishes the failure metrics but the job continues unless failureAction: "FAIL" is also set.

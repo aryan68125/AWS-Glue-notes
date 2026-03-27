@@ -6219,9 +6219,9 @@ dynamodb.put_item(
     - ![pending_messages_sqs_blockage](images/production_grade_implementation_version_6/SQS/pending_messages_sqs_blockage.png)  
 - Broken pipeline diagnosis
     - ![pipeline_broken_chain_diagnosis_sqs](images/production_grade_implementation_version_6/SQS/pipeline_broken_chain_diagnosis_sqs.svg)
-    - This is the problem. FileProcessingQueue.fifo shows Messages available: 11 and Messages in flight: 1. These are stale messages from all your previous test uploads during cleanup. With a 30 minute visibility timeout, each time Lambda picks up a message and partially processes it, the message becomes invisible for 30 minutes before reappearing. Your new upload is just adding to an already-backed-up queue.
+    - This is the problem. ```FileProcessingQueue.fifo``` shows Messages available: 11 and Messages in flight: 1. These are stale messages from all your previous test uploads during cleanup. With a 30 minute visibility timeout, each time Lambda picks up a message and partially processes it, the message becomes invisible for 30 minutes before reappearing. Your new upload is just adding to an already-backed-up queue.
 - Solution : (Do not apply this in production)
-    - The fix is one click — go to SQS → FileProcessingQueue.fifo → click the Purge button at the top of the page. This instantly deletes all 12 stuck messages. Then re-upload your CSV file and the pipeline will run immediately.
+    - The fix is one click — go to ```SQS → FileProcessingQueue.fifo → click the Purge button``` at the top of the page. This instantly deletes all 12 stuck messages. Then re-upload your CSV file and the pipeline will run immediately.
 
 
 

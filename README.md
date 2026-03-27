@@ -5995,6 +5995,8 @@ dynamodb.put_item(
                         ↓ status = FAILED   →  EvaluateRetry → check retry_count → IncrementRetry → RunGlueJob
                   ```
             - This means a stale DLQ message for an already-successful file gets silently cleaned up the message is deleted from the DLQ and nothing else happens. No duplicate Glue run, no duplicate data in Silver S3.
+        - You might be wondering how is ```row_count``` being updated in dynamoDB table after the cause of failure in the pipeline is fixed and the pipeline successfully processed the file that previously failed to be processed. 
+            - ```row_count``` in dynamoDB is being updated by AWS glue ETL job itself instead of the replay step function. hence this step function only updates the status from FAIL to SUCCESS.
 
 #### AWS ETL pipeline 
 - Add IAM role with appropriate permissions for AWS glue ETL to work properly

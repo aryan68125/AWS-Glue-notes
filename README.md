@@ -5801,14 +5801,21 @@ dynamodb.put_item(
                     "Resource": "arn:aws:states:::dynamodb:getItem",
                     "Parameters": {
                     "TableName": "file_processing_registry",
-                    "Key": {
-                        "file_key": {
-                        "S.$": "$.parsed.body.file_key"
-                        }
-                    }
+                    "Key": { "file_key": { "S.$": "$.parsed.body.file_key" } }
                     },
                     "ResultPath": "$.ddb",
-                    "Next": "EvaluateRetry"
+                    "Next": "CheckAlreadySucceeded"
+                },
+                "CheckAlreadySucceeded": {
+                    "Type": "Choice",
+                    "Choices": [
+                    {
+                        "Variable": "$.ddb.Item.status.S",
+                        "StringEquals": "SUCCESS",
+                        "Next": "SkipReplay"
+                    }
+                    ],
+                    "Default": "EvaluateRetry"
                 },
                 "EvaluateRetry": {
                     "Type": "Choice",

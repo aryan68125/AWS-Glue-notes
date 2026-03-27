@@ -5943,6 +5943,50 @@ dynamodb.put_item(
       ```
 
 #### AWS ETL pipeline 
+- Add IAM role with appropriate permissions for AWS glue ETL to work properly
+    - Create a role named ```AWSGlueRole``` and attach this role to AWS glue that you are creating.
+    - Attached policies: 
+        - Add AWS managed policy called ```AWSGlueServiceRole``` to this role
+        - Add custom policy that was earlier made for Lambda function called ```DynamoDbAccessPolicyForLambdaFunction```
+        ```json
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Sid": "DynamoDbAccessPolicyForLambdaFunction",
+                    "Effect": "Allow",
+                    "Action": [
+                        "dynamodb:PutItem",
+                        "dynamodb:GetItem",
+                        "dynamodb:UpdateItem"
+                    ],
+                    "Resource": "arn:aws:dynamodb:ap-south-1:406868976171:table/file_processing_registry"
+                }
+            ]
+        }
+        ```
+        - Add this custom policy called ```LimitedS3PermissionPolicy```
+        ```json
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "s3:GetObject",
+                        "s3:PutObject",
+                        "s3:ListBucket"
+                    ],
+                    "Resource": [
+                        "arn:aws:s3:::aws-glue-s3-bucket-one",
+                        "arn:aws:s3:::aws-glue-s3-bucket-one/*",
+                        "arn:aws:s3:::data-sink-one",
+                        "arn:aws:s3:::data-sink-one/*"
+                    ]
+                }
+            ]
+        }
+        ```
 - improved code : 
     - ```python
         import sys
@@ -5954,6 +5998,7 @@ dynamodb.put_item(
         from awsglue.gluetypes import *
         from awsgluedq.transforms import EvaluateDataQuality
         from awsglue import DynamicFrame
+        import boto3
 
         from functools import reduce
         from pyspark.sql import functions as F
@@ -6174,7 +6219,8 @@ dynamodb.put_item(
         deduped_df = df_clean.dropDuplicates(["review_id"])
 
         print("Glue Visual ETL | Before dedup:", df_clean.count())
-        print("Glue Visual ETL | After dedup:", deduped_df.count())
+        row_count_duped_df = deduped_df.count()
+        print("Glue Visual ETL | After dedup:", row_count_duped_df)
 
         deduped_dynamic_frame = DynamicFrame.fromDF(
             deduped_df, glueContext, "deduped_dynamic_frame"
@@ -6208,6 +6254,21 @@ dynamodb.put_item(
         SilverlayerdatasinkS3_node1772432020219.setCatalogInfo(catalogDatabase="aws-glue-tutorial-aditya",catalogTableName="silver_table_sales_data")
         SilverlayerdatasinkS3_node1772432020219.setFormat("glueparquet", compression="snappy")
         SilverlayerdatasinkS3_node1772432020219.writeFrame(deduped_dynamic_frame)
+
+        # -------- WRITE ROW COUNT TO DYNAMODB -------- #
+        # Written after writeFrame so row_count only lands in DynamoDB
+        # if the data was actually written to Silver S3 successfully
+        file_key = f"s3://{source_bucket}/{source_key}"
+        dynamodb_client = boto3.client("dynamodb", region_name="ap-south-1")
+        dynamodb_client.update_item(
+            TableName="file_processing_registry",
+            Key={"file_key": {"S": file_key}},
+            UpdateExpression="SET row_count = :r",
+            ExpressionAttributeValues={":r": {"N": str(row_count_duped_df)}}
+        )
+        print(f"Glue Visual ETL | Row count {row_count_duped_df} written to DynamoDB for {file_key}")
+        # -------- WRITE ROW COUNT TO DYNAMODB -------- #
+
         job.commit()
       ```
     - GAPs that are fixed in this version of glue code 
@@ -6225,6 +6286,13 @@ dynamodb.put_item(
             - The original code called ```.collect()``` with no limit, which loads the entire file into the Glue driver's memory as a Python list. For my current sales CSV files with 489 rows this is harmless. But if this same ETL pipeline were ever pointed at a larger file say a 500MB file with hundreds of thousands of rows.```collect()``` would attempt to load the entire file into the driver's 10GB memory allocation. This is not guaranteed to fail but it is an unnecessary risk.
             - ```limit(1000)``` tells Spark to read only the first 1000 rows before collecting to the driver. For corruption detection this is entirely sufficient structural corruption like wrong delimiters or extra columns almost always appears consistently throughout a file, not just in rows beyond row 1000. The trade-off is that a file with corruption starting at row 1001 would pass this check, but that scenario is extremely unlikely in practice and the Spark-level corruption checks that follow would still catch it.
             - The choice of 1000 rather than 10 is deliberate. An earlier version of the code used ```limit(10)``` which was inadequate your own ```sales_data_4.csv``` had corruption starting at line 116, which ```limit(10)``` would have missed entirely. 1000 provides meaningful coverage of the file while keeping driver memory usage bounded regardless of file size.
+        - **Glue ETL job will now write the number of rows processed in each file directly to DynamoDB**
+            - The boto3 ```update_item``` call inside your Glue script connects to DynamoDB just like any other AWS service call. Glue runs on an EC2-backed cluster that carries the IAM role you attached ```AWSGlueRole```. As long as that role has d```ynamodb:UpdateItem``` permission on ```file_processing_registry```, the call goes through without any intermediary.
+            - The Step Function is completely uninvolved in this. It is sitting and waiting for the Glue job to finish — it has no idea what is happening inside the script. The DynamoDB write happens silently inside the Glue process while the Step Function just sees "Glue job is running".
+            - This is a common pattern in data engineering using boto3 inside a Glue script to write metadata, audit logs, or metrics to DynamoDB, S3, or other AWS services as a side effect of the main processing job. Glue is just a Python process running on AWS infrastructure with an IAM role, so it can call any AWS service that the role has permission for.
+            - Why I decided to do this ?
+                - Row count is the simplest and most important data quality signal after successful ingestion. Without it, status = SUCCESS tells you the pipeline ran without errors — but it tells you nothing about whether the right amount of data actually landed.
+                - Consider three scenarios that ```status = SUCCESS``` cannot distinguish between. A file arrives with 489 rows and 489 rows land in Silver this is correct. A file arrives with 489 rows but a bug in the deduplication logic removes 400 of them as false duplicates this is a silent data loss that ```SUCCESS``` does not catch. A file arrives completely empty due to an upstream system error but passes all validation checks because an empty file with correct headers is technically valid this is also ```SUCCESS```.
     - Explaination :  ```BEST_EFFORT``` and ```STRICT``` are values for ```dataQualityResultsPublishing.strategy```. They control how and when results are published to CloudWatch.
         - ```BEST_EFFORT``` : publish results whenever possible, even if publishing itself fails. If the DQ evaluation encounters an internal error while trying to write metrics to CloudWatch, it swallows that error and lets the job continue. It is tolerant of publishing failures. If DQ rules are violated it still publishes the failure metrics but the job continues unless failureAction: "FAIL" is also set.
         - ```STRICT``` : publish results and if publishing itself fails, treat that as a hard error. If Glue cannot write DQ metrics to CloudWatch for any reason, it raises an exception immediately. It is intolerant of publishing failures. Like BEST_EFFORT, if DQ rules are violated it publishes the failure metrics but the job continues unless failureAction: "FAIL" is also set.
@@ -6264,9 +6332,29 @@ dynamodb.put_item(
     - This is the problem. ```FileProcessingQueue.fifo``` shows Messages available: 11 and Messages in flight: 1. These are stale messages from all your previous test uploads during cleanup. With a 30 minute visibility timeout, each time Lambda picks up a message and partially processes it, the message becomes invisible for 30 minutes before reappearing. Your new upload is just adding to an already-backed-up queue.
 - Solution : (Do not apply this in production)
     - The fix is one click — go to ```SQS → FileProcessingQueue.fifo → click the Purge button``` at the top of the page. This instantly deletes all 12 stuck messages. Then re-upload your CSV file and the pipeline will run immediately.
-
-
-
+#### Permission related error AWS glue ETL pipeline was not allowed to write in DynamoDB
+Error message : 
+```bash
+Error Category: PERMISSION_ERROR; Failed Line Number: 272; ClientError: An error occurred (AccessDeniedException) when calling the UpdateItem operation: User: arn:aws:sts::406868976171:assumed-role/AWSGlueRole/GlueJobRunnerSession is not authorized to perform: dynamodb:UpdateItem on resource: arn:aws:dynamodb:ap-south-1:406868976171:table/file_processing_registry because no identity-based policy allows the dynamodb:UpdateItem action
+```
+- Add this custom policy named ```DynamoDbAccessPolicyForLambdaFunction``` to the role that was created earlier for AWS glue ETL pipeline ```AWSGlueRole```
+    - ```json
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Sid": "DynamoDbAccessPolicyForLambdaFunction",
+                    "Effect": "Allow",
+                    "Action": [
+                        "dynamodb:PutItem",
+                        "dynamodb:GetItem",
+                        "dynamodb:UpdateItem"
+                    ],
+                    "Resource": "arn:aws:dynamodb:ap-south-1:406868976171:table/file_processing_registry"
+                }
+            ]
+        }
+      ```
 
 
 

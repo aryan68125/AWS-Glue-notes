@@ -6418,7 +6418,9 @@ Error Category: PERMISSION_ERROR; Failed Line Number: 272; ClientError: An error
 
 
 
-
+TODO FIX this 
+Gap 1 — CloudWatch alerting is documented but never implemented
+This was Gap 6 from the original list and it appears in the README as a TODO but there is no implementation section for it anywhere in Version 6. You have no automated alerting if the DLQ grows, if Glue jobs fail repeatedly, or if the Step Function starts failing. In production this means a silent failure — files stop landing in Silver S3 and nobody knows until someone manually checks the dashboard.
 
 
 

@@ -6234,6 +6234,26 @@ dynamodb.put_item(
         "dataQualityResultsPublishing.strategy": "STRICT"  # publishing failure → exception raised
       ```
         - This means two things will cause your job to fail a DQ rule violation, and a failure to publish DQ results to CloudWatch. Both are treated as hard errors. This is the most defensive combination for a production pipeline where you want to know immediately if anything goes wrong, whether it is bad data or a monitoring infrastructure problem.
+
+#### DynamoDB setup
+- The table inside this dynamoDB is named ```file_processing_registry``` where I will maintain records that will allow us to track which files are processed successfully , in_progress or has failed to process by AWS glue ETL pipeline.
+- ![dynamoDB_1](images/production_grade_implementation_version_6/DynamoDB/dynamoDB_1.png)
+- ![dynamoDB_2](images/production_grade_implementation_version_6/DynamoDB/dynamoDB_2.png)
+- ![dynamoDB_3](images/production_grade_implementation_version_6/DynamoDB/dynamoDB_3.png)
+- ![dynamoDB_4](images/production_grade_implementation_version_6/DynamoDB/dynamoDB_4.png)
+- ![dynamoDB_5](images/production_grade_implementation_version_6/DynamoDB/dynamoDB_5.png)
+- ![dynamoDB_6](images/production_grade_implementation_version_6/DynamoDB/dynamoDB_6.png)
+- After you create your table you will see something like this 
+    - ![dynamoDB_8](images/production_grade_implementation_version_6/DynamoDB/dynamoDB_8.png)
+    - Now you need to turn ttl settings on so that the ttl attribute that is being added by the lambda function in this table can actually take effect otherwise the records will remain in the table forever and the purpose of adding the ttl column in the table by lambda function will be defeated
+    - ![dynamoDB_10](images/production_grade_implementation_version_6/DynamoDB/dynamoDB_10.png)
+    - Here in this screen shot you can see the option to turn off the ttl setting this is because in my case the ttl is already on for this table but when you come to this option then here you will see the option to turn the ttl on instead of turn it off
+    - ![dynamoDB_9](images/production_grade_implementation_version_6/DynamoDB/dynamoDB_9.png)
+    - Once everything is said and done you must see this 
+    ![dynamoDB_11](images/production_grade_implementation_version_6/DynamoDB/dynamoDB_11.png)
+    - Now the ttl column will be used to delete the records that expires based on the value in unix timestamp that this column has and it will be deleted permanently.
+- When a new file is processed by the ETL pipeline the data is inserted in dynamoDB looks something like this 
+    - ![dynamoDB_7](images/production_grade_implementation_version_6/DynamoDB/dynamoDB_7.png)
     
 ### Issues faced during the Implementation for version 6:
 #### ETL was not being invoked on file arrival in S3 bucket 

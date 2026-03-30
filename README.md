@@ -10,7 +10,7 @@ AWS CLI setup documentation : <br>
 AWS CLI docs : https://docs.aws.amazon.com/cli/latest/userguide/cli-usage-commandstructure.html
 
 ## Topics to cover : 
-- AWS S3
+- AWS S3 bucket
 - Managed Tables
 - Lamda Triggers
 - Glue Catalog
@@ -27,6 +27,13 @@ AWS CLI docs : https://docs.aws.amazon.com/cli/latest/userguide/cli-usage-comman
 - Custom Functions
 - Work flow orchestration
 - Custom collection methods in AWS Glue
+- AWS event bridge 
+- AWS cloudwatch
+- AWS Step functions 
+- AWS Lambda functions
+- AWS SQS
+- AWS Athena
+- AWS DynamoDB
 
 ## AWS Glue
 ### **What is ETL/ELT?** <br>

@@ -27,6 +27,7 @@ AWS CLI docs : https://docs.aws.amazon.com/cli/latest/userguide/cli-usage-comman
 - Custom Functions
 - Work flow orchestration
 - Custom collection methods in AWS Glue
+- AWS IAM and policies
 - AWS event bridge 
 - AWS cloudwatch
 - AWS Step functions 
@@ -34,6 +35,35 @@ AWS CLI docs : https://docs.aws.amazon.com/cli/latest/userguide/cli-usage-comman
 - AWS SQS
 - AWS Athena
 - AWS DynamoDB
+
+## AWS Region and availibility zone 
+### AWS Regions
+An AWS Region is a physical geographic location in the world where Amazon has built a cluster of data centres. Each Region is completely independent of every other Region — it has its own power supply, networking, and physical infrastructure.
+
+AWS built this model for three reasons. First, latency if your users are in India, running your application in ap-south-1 (Mumbai) is faster than running it in us-east-1 (Virginia) because the data travels a shorter physical distance. Second, data residency — many countries and industries have laws requiring that data stays within specific geographic boundaries. 
+
+### AWS Zones
+Availability Zones are the individual data centre clusters that exist inside a Region. Every AWS Region contains multiple Availability Zones typically three to six and each one is physically separate from the others.
+
+A single Availability Zone is one or more physical data centre buildings located in the same metropolitan area as the other zones in that Region. Each zone has its own independent power supply from a different grid, its own cooling systems, its own physical security, and its own network connections to the internet. The independence is the entire point if one zone loses power or catches fire, the others keep running.
+
+Within a Region, all the Availability Zones are connected to each other through dedicated private fibre cables that AWS owns and operates. The latency between zones is under 1 millisecond, which is fast enough that your application can treat them as if they are in the same location while still getting the fault isolation benefit.
+
+## AWS IAM and policies 
+### AWS IAM 
+IAM stands for Identity and Access Management. It is the security system that controls who can do what inside your AWS account. Nothing in AWS can talk to anything else without IAM being involved every API call, every service interaction, every CLI command goes through IAM before it is allowed to proceed.
+
+#### The core problem IAM solves
+When you have multiple services, users, and applications inside one AWS account, you need a way to say precisely which entity is allowed to perform which actions on which resources. Without IAM, either everything would have access to everything which is a massive security risk or you would have no way to automate anything because services could not communicate with each other.
+
+#### The four main IAM concepts
+**Users** are human identities. An IAM user represents a person a developer, a data engineer, an administrator. Users have permanent credentials in the form of a password for the AWS console and access keys for the CLI or SDK. In modern AWS practice, creating individual IAM users for humans is being replaced by identity federation where your company's existing login system handles authentication, but the concept still exists.
+
+**Groups** are collections of users. Instead of attaching permissions directly to each individual user, you create a group called data-engineers, attach the relevant permissions to that group, and then add users to it. Any user in the group inherits the group's permissions. This makes managing permissions for teams much simpler.
+
+**Roles** are the most important IAM concept for building AWS systems. A role is a set of permissions that is assumed temporarily by a service, application, or user. Unlike users, roles do not have permanent credentials — they issue temporary credentials that expire after a short period, typically one hour. When an AWS service like Lambda needs to access DynamoDB, it assumes an IAM role and gets temporary credentials valid for that session only.
+
+**Policies** are the actual permission definitions. A policy is a JSON document that says what actions are allowed or denied on what resources. Policies are attached to users, groups, or roles to grant or restrict permissions.
 
 ## AWS Glue
 ### **What is ETL/ELT?** <br>

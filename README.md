@@ -5286,6 +5286,9 @@ dynamodb.put_item(
 ### Implementation for version 6:
 - With this implementation I am aiming to close all the gaps that are currently present in the version 5 implementation.
 
+#### Architectural diagram
+![version6_architecture](images/production_grade_implementation_version_6/architectural_diagram/version6_architecture.svg)
+
 #### S3 bucket
 ![s3_event_bridge_setup](images/production_grade_implementation_version_6/S3/s3_event_bridge_setup.png)
 - This setup allows source S3 bucket to send events to event bridge.

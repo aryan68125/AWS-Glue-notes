@@ -61,7 +61,7 @@ When you have multiple services, users, and applications inside one AWS account,
 
 **Groups** are collections of users. Instead of attaching permissions directly to each individual user, you create a group called data-engineers, attach the relevant permissions to that group, and then add users to it. Any user in the group inherits the group's permissions. This makes managing permissions for teams much simpler.
 
-**Roles** are the most important IAM concept for building AWS systems. A role is a set of permissions that is assumed temporarily by a service, application, or user. Unlike users, roles do not have permanent credentials — they issue temporary credentials that expire after a short period, typically one hour. When an AWS service like Lambda needs to access DynamoDB, it assumes an IAM role and gets temporary credentials valid for that session only.
+**Roles** are the most important IAM concept for building AWS systems. A role is a set of permissions that is assumed temporarily by a service, application, or user. Unlike users, roles do not have permanent credentials they issue temporary credentials that expire after a short period, typically one hour. When an AWS service like Lambda needs to access DynamoDB, it assumes an IAM role and gets temporary credentials valid for that session only.
 
 **Policies** are the actual permission definitions. A policy is a JSON document that says what actions are allowed or denied on what resources. Policies are attached to users, groups, or roles to grant or restrict permissions.
 

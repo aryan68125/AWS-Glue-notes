@@ -65,6 +65,9 @@ When you have multiple services, users, and applications inside one AWS account,
 
 **Policies** are the actual permission definitions. A policy is a JSON document that says what actions are allowed or denied on what resources. Policies are attached to users, groups, or roles to grant or restrict permissions.
 
+#### How policies work?
+A policy is made of statements. Each statement has four key parts. The Effect is either Allow or Deny. The Action is what operation is being controlled, written as ```service:operation``` for example ```dynamodb:GetItem```, ```s3:PutObject```, or ```glue:StartJobRun```. The Resource is which specific AWS resource the action applies to, written as an ARN. The Condition is an optional filter that makes the permission apply only under certain circumstances.
+
 ## AWS Glue
 ### **What is ETL/ELT?** <br>
 We want to **E**xtract the data and **L**oad that data somewhere and that loaded data should be **T**ransformed as per requirments.

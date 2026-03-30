@@ -67,6 +67,19 @@ When you have multiple services, users, and applications inside one AWS account,
 
 #### How policies work?
 A policy is made of statements. Each statement has four key parts. The Effect is either Allow or Deny. The Action is what operation is being controlled, written as ```service:operation``` for example ```dynamodb:GetItem```, ```s3:PutObject```, or ```glue:StartJobRun```. The Resource is which specific AWS resource the action applies to, written as an ARN. The Condition is an optional filter that makes the permission apply only under certain circumstances.
+Full Example : 
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "dynamodb:GetItem",
+      "Resource": "arn:aws:dynamodb:ap-south-1:406868976171:table/file_processing_registry"
+    }
+  ]
+}
+```
 
 ## AWS Glue
 ### **What is ETL/ELT?** <br>

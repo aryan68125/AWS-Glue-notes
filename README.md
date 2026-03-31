@@ -36,6 +36,68 @@ AWS CLI docs : https://docs.aws.amazon.com/cli/latest/userguide/cli-usage-comman
 - AWS Athena
 - AWS DynamoDB
 
+## Underline theory of cloud computing 
+### Virtualization and Hypervisor
+#### Why a data engineer needs to understand this at all?
+When you run a Glue job, a Lambda function, or a Databricks cluster, you are not getting a dedicated physical machine. You are getting a slice of a physical machine that AWS or Databricks manages. Virtualisation is the technology that makes that slicing possible. Understanding it helps you reason about why Glue has a cold start, why Databricks clusters take time to spin up, why two Glue jobs running simultaneously do not interfere with each other, and why serverless feels instant compared to cluster-based compute.
+
+#### What virtualisation is?
+A physical server is a box with CPUs, RAM, storage, and network cards. In the early days of computing, one application ran on one physical server. If the application only used 10% of the CPU, the other 90% sat idle. This was enormously wasteful — expensive hardware doing nothing most of the time.
+
+Virtualisation solves this by creating an abstraction layer that makes one physical machine appear to be multiple independent machines. Each virtual machine believes it has its own dedicated CPU, its own RAM, its own storage, and its own operating system. In reality all of them are sharing the same physical hardware underneath. The software layer that creates and manages this illusion is called a hypervisor.
+
+#### What a hypervisor is?
+A hypervisor is the software that sits between the physical hardware and the virtual machines running on top of it. It has two core jobs. The first is to divide the physical hardware resources CPU cores, RAM, storage, network bandwidth into isolated allocations and assign them to each virtual machine. The second is to intercept every instruction that a virtual machine tries to execute against hardware and translate it into safe operations on the actual physical hardware, preventing any virtual machine from accidentally or maliciously affecting another.
+
+Think of it like an apartment building manager. The building has one set of physical infrastructure walls, pipes, electricity. The manager divides it into apartments, ensures each tenant only accesses their own space, handles disputes, and makes sure one tenant flooding their bathroom does not destroy everyone else's apartment. The hypervisor is that manager, the building is the physical server, and the apartments are the virtual machines.
+
+#### types of hypervisors
+**Type 1 hypervisors** run directly on the physical hardware with no operating system underneath. They are sometimes called bare-metal hypervisors. The hypervisor itself is the first thing that runs when the machine boots, and it then starts the virtual machines on top of itself. AWS uses a Type 1 hypervisor called the Nitro Hypervisor, which is a custom-built system derived from KVM. Because there is no general-purpose operating system between the hardware and the hypervisor, Type 1 hypervisors are extremely fast and efficient. Microsoft Hyper-V, VMware ESXi, and Xen are other examples.
+
+**Type 2 hypervisors** run as an application on top of an existing operating system. The operating system boots first, then the hypervisor runs as a program on that OS, and then virtual machines run on top of the hypervisor. VirtualBox on your laptop is a Type 2 hypervisor. You run Windows or macOS, then you install VirtualBox, then you create Ubuntu virtual machines inside it. Type 2 hypervisors are convenient for development and testing but slower than Type 1 because every hardware instruction passes through two layers the hypervisor and then the host operating system — before reaching actual hardware.
+
+#### How AWS uses virtualisation the Nitro system?
+AWS built its own hypervisor called Nitro specifically because the existing open-source hypervisors were not fast enough for what AWS needed. The Nitro system has three parts that work together.
+
+The Nitro Hypervisor is an extremely thin layer it handles only CPU and memory virtualisation. It is so minimal that it adds almost no overhead. AWS measured that Nitro gives EC2 instances access to nearly 100% of the underlying hardware performance, compared to older hypervisors that consumed 30% of hardware resources just running the virtualisation layer itself.
+
+Nitro Cards are dedicated hardware chips that offload the work of virtualising storage and networking away from the CPU entirely. Instead of the hypervisor software handling every network packet and storage operation on the main CPU, dedicated silicon chips handle it. This means your Glue job's 10 workers are not competing with hypervisor overhead for CPU time the Nitro Cards handle all the network and storage virtualisation in hardware, essentially for free.
+
+The Nitro Security Chip handles the security and integrity of the instance. It cryptographically verifies the firmware at boot, provides hardware root of trust, and enables features like Nitro Enclaves which create isolated execution environments even the AWS operators cannot access.
+
+When I start a Glue job and AWS provisions G.1X workers, each worker is an EC2 instance running inside the Nitro hypervisor. My PySpark code runs in a JVM inside that virtual machine, which runs on a physical server in a Mumbai data centre that is also running dozens of other customers' virtual machines at the same time, completely isolated from mine.
+
+#### Containers versus virtual machines what Databricks and Lambda actually use
+This is where it gets specifically relevant for your work. Not everything in AWS uses full virtual machines. Some services use containers instead, and understanding the difference explains the startup time differences you experience.
+
+A virtual machine virtualises hardware it pretends to be a complete computer with its own CPU, RAM, and operating system kernel. Creating a new virtual machine means booting an entire operating system, which takes 30 to 90 seconds.
+
+A container virtualises the operating system it shares the host OS kernel but gets its own isolated filesystem, network namespace, and process space. Creating a new container means starting a process and setting up the isolation, which takes milliseconds to a few seconds.
+
+AWS Lambda uses a system called Firecracker, which is a microVM hypervisor also built by AWS. Firecracker creates extremely lightweight virtual machines that boot in under 125 milliseconds. This is why Lambda cold starts feel nearly instant you are still getting a real virtual machine with hardware isolation, but it is so stripped down that it boots faster than most containers. Each Lambda invocation runs in its own Firecracker microVM. When you uploaded a CSV file and Lambda triggered, a Firecracker microVM was created, your Lambda function ran, and the microVM was either recycled for a future warm invocation or destroyed.
+
+Databricks clusters use EC2 instances full virtual machines under the Nitro hypervisor. When you start a Databricks job cluster, AWS spins up new EC2 instances, each booting a full Linux operating system, installing the Databricks runtime, starting Java, starting Spark, and registering with the driver. This takes 3 to 8 minutes. Databricks pools reduce this by keeping terminated instances in a warm state so they can be reused, which is why interactive clusters on Databricks feel much faster than job clusters for iterative notebook work.
+
+Your Glue jobs also use EC2 instances under Nitro. The 2-minute cold start you observed is the time to provision the EC2 instances, boot the OS, start the Glue runtime, initialise the SparkContext, and connect the workers to the driver. There is no way to avoid this cold start with Glue because it is inherent to spinning up a cluster of virtual machines.
+
+### How isolation works? why your Glue job cannot see another customer's data?
+This is a question that matters deeply in cloud computing from a security perspective. How can AWS guarantee that your Glue job running on a shared physical server cannot access another company's data running on the same server?
+
+The answer is hardware-enforced memory isolation. Modern CPUs have a feature called virtual memory where each process is given a virtual address space that maps to different physical memory locations through a translation table managed by the OS. The hypervisor extends this each virtual machine gets its own set of translation tables, managed by the hypervisor. A virtual machine can only access memory addresses in its own translation table. Even if malicious code inside a virtual machine tried to read memory belonging to another virtual machine, the CPU hardware would reject the access and raise a fault before any data was exposed.
+
+The Nitro hypervisor further strengthens this by running in a separate hardware domain entirely. The hypervisor code itself runs in a privileged CPU ring that even the virtual machines' operating systems cannot access. AWS engineers operating the infrastructure also cannot access your virtual machine's memory at runtime this is enforced at the hardware level by the Nitro Security Chip.
+
+This is why you can trust that your sales CSV data inside a Glue job is not visible to another company's Glue job running on the same physical server at the same time. The isolation is not just a software policy it is enforced by the CPU hardware itself.
+
+#### What this means practically for your data engineering work?
+**Glue cold starts** exist because spinning up EC2 virtual machines takes time. The hypervisor needs to allocate memory pages, set up translation tables, boot the OS, and start the runtime. You cannot eliminate this. You can mitigate it by batching small files together into fewer larger Glue runs rather than 1000 individual runs, but the fundamental cause is VM startup time.
+
+**Lambda's near-instant response** is because Firecracker microVMs are designed for this use case minimal boot time, maximum isolation. Your Lambda idempotency function runs in a microVM that boots in under 125ms. The warm invocation path reuses an existing microVM, making it even faster.
+
+**Databricks cluster startup** is the same EC2 VM startup problem as Glue, plus the additional time to install the Databricks runtime and start Spark. Databricks pools work by keeping VMs running but in a paused state, so reuse is fast. This is why in production Databricks deployments, operations teams keep a pool of warm instances pre-provisioned rather than starting fresh clusters for every job.
+
+**Why serverless feels different from cluster-based** Lambda and Glue Serverless use microVMs that start fast and die after each invocation. Databricks and traditional Glue jobs use full EC2 VMs that take minutes to start but then stay warm for the duration of your work session. For a data engineer, this means serverless is better for event-driven, short, frequent tasks like your Lambda idempotency check while cluster-based is better for long-running, compute-heavy transformations where the startup cost amortises over a long execution time.
+
 ## AWS Region and availibility zone 
 ### AWS Regions
 An AWS Region is a physical geographic location in the world where Amazon has built a cluster of data centres. Each Region is completely independent of every other Region — it has its own power supply, networking, and physical infrastructure.

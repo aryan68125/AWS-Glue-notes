@@ -143,6 +143,157 @@ Full Example :
 }
 ```
 
+## AWS Elastic Block Storage (EBS) : 
+### What is BLOCK storage ?
+There are three main types of storage block storage, file storage, and object storage. Understanding the difference explains why block storage exists.
+
+**Block storage** exposes raw blocks with addresses. The consumer typically an operating system or database directly controls how data is organised on those blocks. It is the lowest level, closest to bare hardware. It is fast because there is minimal overhead between your application and the actual data.
+
+**File storage** exposes a filesystem with files and folders over a network. NFS and SMB are protocols for this. Multiple machines can mount the same filesystem simultaneously and see the same files. The storage system manages the filesystem structure for you. It is convenient but slower than block storage because of the filesystem overhead and network protocol.
+
+**Object storage** which is what S3 is exposes a flat namespace of objects identified by keys. There are no folders, no blocks, no filesystem. You PUT an object, you GET an object by its key. Object storage is designed for massive scale and high durability, not for low-latency random access. You cannot mount S3 as a drive and run a database on it the way you can with block storage.
+
+### What AWS EBS is?
+Amazon Elastic Block Store is AWS's block storage service for EC2 instances. When you launch an EC2 instance which as we discussed is a virtual machine running under the Nitro hypervisor that instance needs a disk. EBS provides that disk as a network-attached block device.
+
+The word elastic means the volume can be resized, the performance can be adjusted, and it exists independently of the instance. The word block refers to the fact that it presents raw block storage to the operating system running inside the EC2 instance, not a filesystem or an object store.
+
+When your EC2 instance boots, it sees an EBS volume as if it were a physical disk directly attached to the machine. The Linux kernel inside your instance talks to it using standard block device protocols. The instance formats it with a filesystem like ext4, mounts it, and uses it exactly like a local hard drive. The fact that the actual storage hardware is somewhere else in the AWS data centre connected over a high-speed network is completely transparent to the operating system.
+
+### How EBS works under the hood?
+EBS volumes are not stored on the same physical server as your EC2 instance. They live on separate, dedicated storage servers connected to the compute servers through AWS's internal network fabric a high-bandwidth, low-latency network that AWS built specifically for this purpose using the Nitro Cards discussed earlier.
+
+When your EC2 instance writes data to its EBS volume, the Nitro Card on the compute server intercepts the block write operation and sends it over the internal network to the storage server where the actual EBS volume lives. This happens so fast sub-millisecond latency on io2 volumes that the operating system inside the EC2 instance cannot distinguish it from a local disk.
+
+This separation of compute and storage is architecturally important. It means your EC2 instance can be terminated and a new one started, and the EBS volume with all your data is completely unaffected. The data persists independently of the compute instance lifecycle. You can detach an EBS volume from one instance and attach it to a different instance, and the new instance sees all the data exactly as the previous one left it.
+
+### EBS volume types
+AWS offers several EBS volume types optimised for different use cases, and the differences matter for data engineering workloads.
+
+**gp3** is the general purpose SSD and the default for most workloads. It provides a baseline of 3000 IOPS and 125 MB/s throughput regardless of volume size. You can independently provision additional IOPS and throughput up to 16,000 IOPS and 1000 MB/s without increasing storage size. IOPS means input/output operations per second — the number of individual read or write operations the volume can handle per second. For most Glue jobs and general EC2 workloads this is the right choice.
+
+**io2 Block Express** is the high-performance SSD for latency-sensitive workloads. It provides up to 256,000 IOPS and sub-millisecond latency. This is what you would use for a high-throughput database like a production PostgreSQL or Oracle instance where every millisecond of storage latency matters. It is significantly more expensive than gp3.
+
+**st1** is a throughput-optimised hard drive designed for large sequential reads and writes rather than random access. It has low IOPS but high throughput — up to 500 MB/s. This is appropriate for workloads that read large files sequentially, like a Hadoop data node or a log processing system. It is much cheaper than SSD volumes.
+
+**sc1** is a cold hard drive for infrequently accessed data. The cheapest EBS option. Used for archival data that is rarely read.
+
+### EBS versus S3 a comparison that matters directly for your pipeline
+This distinction is critical for a data engineer and it directly explains architectural decisions in your pipeline.
+
+**EBS** is a disk attached to one EC2 instance. Only that instance can read and write to it. It is fast sub-millisecond latency for random reads and writes. It is limited in size by what you provision. It exists in one Availability Zone. If the AZ goes down, the volume is inaccessible until AWS restores the AZ. It is designed for structured access patterns a database writing rows, an OS reading executables, a virtual machine swapping memory pages.
+
+**S3** is an object store accessible by any AWS service from anywhere. It is slower than EBS for small random reads — typically 10 to 100 milliseconds per request. But it is infinitely scalable, replicated across multiple Availability Zones automatically, and accessible by Glue, Lambda, Athena, Step Functions, and any other AWS service simultaneously. It costs roughly 10 times less per GB than EBS.
+
+This is precisely why your data engineering pipeline uses S3 for data storage and not EBS. Your CSV files land in S3. Your Silver parquet files are written to S3. Your Glue job reads from S3 and writes to S3. This works because Glue workers which are EC2 instances with EBS root volumes read from S3 over the network, transform the data in memory, and write back to S3. The EBS volume on each Glue worker is only used for the operating system, the Glue runtime, and temporary Spark shuffle data during the job. It is not used for your actual pipeline data.
+
+**Real cost impact :** <br>
+If your pipeline stored data on EBS instead of S3, only one EC2 instance could access it at a time, it would cost 10 times more, it would not survive instance termination, and Athena could not query it. S3 is the correct storage layer for a data lake specifically because it is not block storage.
+
+### What EBS means in your specific data engineering context
+Your Glue workers are EC2 instances. Each one has an EBS root volume this is where the Linux OS boots from, where the Glue runtime is installed, and where Spark writes shuffle files when data overflows memory during operations like ```groupBy```, ```join```, and ```dropDuplicates```. When your Glue job runs ```dropDuplicates(["review_id"])``` on a large dataset, Spark may need to spill intermediate data to disk. That disk is the EBS volume on the worker.
+
+If your Glue job fails with a disk space error or shuffle spill errors on very large datasets, the fix is to increase the EBS volume size on your Glue workers or increase the number of workers so each one handles less data. This is a real operational concern at scale even though at your current dataset size of 489 rows per file it will never happen.
+
+Databricks clusters have the same structure each EC2 node has an EBS volume for the OS and Spark shuffle, and your actual data lives in S3. The EBS volume is infrastructure plumbing that you rarely think about directly, but it is always there underneath every compute workload you run on AWS.
+
+### Why shuffle spill happens first the root cause?
+When Spark executes an operation that requires comparing or grouping rows across the entire dataset like ```dropDuplicates(["review_id"])```, ```groupBy```, or ```join``` it cannot do this locally on each worker in isolation. It needs all rows with the same key to land on the same worker so they can be compared. This process of redistributing data across workers based on key is called a shuffle.
+
+During a shuffle every worker sends some of its rows to other workers and receives rows from other workers. All of this intermediate data — rows in transit, rows waiting to be processed needs to live somewhere. Spark first tries to hold it in RAM. If the data is larger than the available RAM on that worker, Spark writes the overflow to local disk. This is called spill data spilling from memory onto disk.
+
+The disk it spills to is the EBS volume attached to that Glue worker EC2 instance. If the spill data is larger than the available EBS space, the job fails with a disk space error.
+
+Your current dataset of 489 rows per file is a few hundred kilobytes. This fits in RAM thousands of times over. But if the same pipeline processed a 10GB CSV file with 50 million rows, the shuffle for dropDuplicates would generate gigabytes of spill data and could exhaust disk space on the workers.
+
+### How to increase EBS volume size on Glue workers?
+Glue does not expose EBS volume configuration directly in the console the way EC2 does. Instead you control it through a job parameter called --job-disk-size. This parameter sets the EBS volume size in GB for each worker.
+
+**In the AWS Glue console:**
+
+Go to AWS Glue → Jobs → click your ingest_sales_data job → click Edit → scroll down to Advanced properties → find the Job parameters section → add a new parameter:
+```bash
+Key:   --job-disk-size
+Value: 96
+```
+The default disk size per Glue worker depends on the worker type. For G.1X the default is 64GB. For G.2X it is 128GB. Setting ```--job-disk-size``` to 96 would give each worker 96GB of EBS storage for shuffle spill and temporary data.
+
+In your Glue job script you can also set it programmatically when starting the job via boto3, which is relevant because your Step Function starts the Glue job with glue:startJobRun. You would add it to the Arguments:
+```json
+"Arguments": {
+    "--source_bucket.$": "$.bucket",
+    "--source_key.$": "$.key",
+    "--job-disk-size": "96"
+}
+```
+Increasing from 10 to 20 doubles the parallelism and halves the data each worker handles. It also doubles the cost : 20 workers × $0.44/DPU-hour instead of 10.
+
+Via boto3 in your Step Function your orchestrate_data_ingestion Step Function starts the Glue job like this:
+```json
+"Parameters": {
+    "JobName": "ingest_sales_data",
+    "Arguments": {
+        "--source_bucket.$": "$.bucket",
+        "--source_key.$": "$.key"
+    }
+}
+```
+You can override the worker count per execution by adding NumberOfWorkers and WorkerType to the Parameters:
+```json
+"Parameters": {
+    "JobName": "ingest_sales_data",
+    "NumberOfWorkers": 20,
+    "WorkerType": "G.1X",
+    "Arguments": {
+        "--source_bucket.$": "$.bucket",
+        "--source_key.$": "$.key"
+    }
+}
+```
+This lets you dynamically control workers per execution, which is useful if some files are much larger than others.
+
+### Worker types and what they mean?
+
+Glue offers several worker types and the choice affects both memory and EBS disk size:
+
+| Worker type | vCPUs | RAM | Default EBS | DPU count | Price/hour |
+|---|---|---|---|---|---|
+| G.1X | 4 | 16GB | 64GB | 1 | $0.44 |
+| G.2X | 8 | 32GB | 128GB | 2 | $0.88 |
+| G.4X | 16 | 64GB | 256GB | 4 | $1.76 |
+| G.8X | 32 | 128GB | 512GB | 8 | $3.52 |
+
+Switching from G.1X to G.2X doubles the RAM per worker, which directly reduces spill because more data fits in memory before Spark needs to write to disk. If your job is failing due to memory pressure rather than disk pressure, upgrading the worker type is often more effective than adding more workers.
+
+The trade-off between adding workers and upgrading worker type:
+
+Adding more workers is better when your data can be parallelised effectively — more partitions, more workers processing them simultaneously. The job runs faster and each worker handles less data.
+
+Upgrading worker type is better when the bottleneck is within a single partition — a single worker receiving a large amount of data for one key during a shuffle. No amount of additional workers helps if one key has 50% of all the rows, because all those rows must land on one worker during a `groupBy` or `dropDuplicates`. Giving that worker more RAM via G.2X or G.4X is the only solution.
+
+### How to diagnose which problem you actually have
+
+When your Glue job fails at scale you need to know whether the issue is disk space, memory, or something else. Glue writes its logs to CloudWatch under `/aws-glue/jobs/output` and `/aws-glue/jobs/error`.
+
+A disk space error looks like this in the logs:
+```
+java.io.IOException: No space left on device
+```
+
+A memory error looks like this:
+```
+java.lang.OutOfMemoryError: Java heap space
+Container killed by YARN for exceeding memory limits
+```
+
+A shuffle spill warning — not a failure but a performance concern — looks like this:
+
+ExternalSorter: Spilling data to disk (25 times so far)
+
+If you see disk space errors, increase --job-disk-size. If you see memory errors or excessive spill warnings, upgrade the worker type from G.1X to G.2X. If the job is slow but not failing, add more workers to increase parallelism.
+
+For your current pipeline these errors will not appear. But when you move to larger datasets in future projects, reading these CloudWatch logs and knowing which parameter to adjust is a core data engineering operational skill.
+
 ## AWS Glue
 ### **What is ETL/ELT?** <br>
 We want to **E**xtract the data and **L**oad that data somewhere and that loaded data should be **T**ransformed as per requirments.

@@ -6469,10 +6469,92 @@ Error Category: PERMISSION_ERROR; Failed Line Number: 272; ClientError: An error
         }
       ```
 
+### DataBricks vs AWS (implementation version 6) comparision:
+Comparision diagram : 
+![comparision_aws_vs_databricks](images/production_grade_implementation_version_6/comparision_aws_vs_databricks/comparision_aws_vs_databricks.svg)
 
+#### How my Version 6 pipeline would look on Databricks?
+Every component in my AWS architecture has a Databricks equivalent, but the amount of custom code I wrote shrinks dramatically because Databricks packages much of what I built manually into platform features.
 
+**File arrival trigger** : In AWS you built a four-component chain: ```S3 → EventBridge → SQS FIFO → Lambda``` just to detect a new file and pass its location downstream. On Databricks this is replaced by a single feature called Auto Loader. Auto Loader uses S3 event notifications or file listing internally and automatically detects new files in an S3 path. You point it at the folder and it handles everything deduplication of events, backpressure, checkpointing with two lines of code:
+```python
+df = spark.readStream.format("cloudFiles") \
+    .option("cloudFiles.format", "csv") \
+    .load("s3://aws-glue-s3-bucket-one/raw_data/sales_data/")
+```
 
+**Idempotency** : My Lambda spent significant effort building a two-step idempotency check with DynamoDB conditional writes to prevent duplicate processing. On Databricks this is solved by Delta Lake's ```MERGE INTO``` statement. Delta Lake maintains a transaction log for every table. When I write using merge on the business key, it is mathematically impossible to create a duplicate row the table format itself enforces exactly-once semantics without any external state store:
+```python
+delta_table.alias("target").merge(
+    new_data.alias("source"),
+    "target.review_id = source.review_id"
+).whenNotMatchedInsertAll().execute()
+```
+The entire DynamoDB ```file_processing_registry``` table, the Lambda idempotency logic, and the conditional put_item complexity disappear. Delta handles it.
 
+**Orchestration** : My Step Functions JSON state machines ```orchestrate_data_ingestion``` and ```replay_failed_ingestion``` would be replaced by Databricks Workflows. I define a DAG of tasks, each task being a notebook or Python script. Retry logic, alerting on failure, email notifications, and dependency management are all configured in the UI or as YAML. The ```replay_failed_ingestion``` step function with its ```CheckAlreadySucceeded```, ```EvaluateRetry```, ```IncrementRetry``` states would collapse into a simple retry configuration on the workflow task.
+
+**ETL transformation** : My Glue PySpark script runs identically on Databricks. The transformation logic ```REGEXP_REPLACE```, ```dropDuplicates(["review_id"])```, the corruption checks is identical PySpark and moves without changes. The main operational difference is that Databricks clusters are warm and reusable. My Glue job has a cold start of approximately 2 minutes every run because it spins up a fresh cluster each time. On Databricks we use a job cluster that starts for each run, or an interactive cluster that is always running and executes jobs in seconds.
+
+**Data quality** : My ```EvaluateDataQuality``` ruleset with ```STRICT``` strategy would be replaced by Delta Live Tables expectations. These are Python decorators on your transformation functions:
+```python
+@dlt.expect_or_fail("valid column count", "length(product_id) > 0")
+@dlt.expect_or_fail("no duplicate reviews", "review_id IS NOT NULL")
+def silver_sales():
+    return spark.read...
+```
+The three modes expect logs violations, ```expect_or_drop``` removes bad rows, ```expect_or_fail``` fails the pipeline map directly to what my ```STRICT``` strategy does.
+
+**Catalog and querying** : My Glue Catalog plus Athena would be replaced by Unity Catalog with Databricks SQL. Unity Catalog adds column-level access control, data lineage tracking showing where each column came from and where it flows to, and a centrally governed namespace. Databricks SQL replaces Athena for querying.
+
+**Cost comparison** : 
+![cost_comparison_chart](images/production_grade_implementation_version_6/comparision_aws_vs_databricks/cost_comparison_chart.svg)
+
+Cost breakdown — 1000 files/day : 
+
+AWS Cost Breakdown — Version 6 ($6,646/month)
+
+| Service           | What it does                                           | Monthly cost |
+|------------------|--------------------------------------------------------|--------------|
+| AWS Glue ETL     | 10 workers × 3 min × 1000 files × $0.44/DPU-hr        | $6,600       |
+| S3               | Source + Silver storage, ~51GB + requests             | $38          |
+| Step Functions   | 200 executions × 32 transitions                       | $5           |
+| Lambda           | 1000 invocations × 512MB × 10s                        | $3           |
+| CloudWatch       | 184MB log ingest                                      | $0.14        |
+| DynamoDB         | 2000 writes + 1000 reads                              | $0.09        |
+| SQS FIFO         | 3000 requests                                         | $0.04        |
+| EventBridge      | 1000 events                                           | $0.03        |
+| **Total**        |                                                        | **$6,646**   |
+
+Glue is 99% of your entire AWS bill. Every other service combined costs $46/month. This is the defining characteristic of a Glue-heavy architecture the compute dominates everything else completely.
+
+Compute Only: $5,847/month VS With Licence: $8,847/month  
+
+| Component                | What it does                                      | Monthly cost |
+|--------------------------|---------------------------------------------------|--------------|
+| Jobs compute (EC2 + DBU) | 11 nodes × 2 min × 1000 files                    | $5,764       |
+| Platform licence (Premium) | Unity Catalog, DLT, Workflows, support         | $3,000       |
+| S3                       | Same storage as AWS side                         | $38          |
+| Databricks SQL           | 100 analyst queries/day                          | $44          |
+| Workflows, Unity Catalog | Included in licence                              | $0           |
+| **Total (Compute Only)** |                                                   | **$5,847**   |
+| **Total (With Licence)** |                                                   | **$8,847**   |
+
+The compute saving against Glue is $836/month because Databricks runs the same Spark workload slightly more efficiently and without the 2-minute cold start overhead that Glue charges for. But the platform licence of $3,000/month turns that saving into a net loss of $2,200/month versus AWS at this scale.
+
+**The honest crossover point**
+At 1,000 files per day Databricks costs $2,200 more per month than AWS. The licence cost is the entire reason. The pure compute cost of Databricks is actually cheaper.
+
+The crossover happens in two scenarios. The first is when your Glue bill grows past $9,000/month — roughly 1,400 files/day with your current configuration — because at that point Databricks compute efficiency and Photon start closing the gap faster than the licence cost widens it. The second and more common scenario is when you add data scientists, ML workflows, and interactive analysis to the platform. If five data scientists are running notebooks daily, that usage is essentially free on Databricks once you have the licence, but on AWS it would mean additional SageMaker or EMR costs that could easily exceed the licence gap.
+
+**How to achieve Unity Catalog features on AWS**
+Unity Catalog gives you three things — column-level access control, data lineage, and a centrally governed namespace. Here is how to get each one on AWS.
+
+**Column-level access control** is provided by AWS Lake Formation. Lake Formation sits on top of the Glue Catalog and S3 and lets you define permissions at the database, table, column, and row level. You grant a user access to a table but exclude specific columns — for example allowing analysts to query the sales table but never see user_id or personal information. These permissions are enforced consistently across Athena, Glue, EMR, and Redshift Spectrum. Setting it up requires registering your S3 data lake with Lake Formation, migrating permissions from raw S3 bucket policies to Lake Formation grants, and enabling fine-grained access control in Athena.
+
+**Data lineage** is provided by Amazon DataZone combined with AWS Glue Data Catalog lineage features. Glue can automatically track which jobs read from which tables and write to which tables, building a lineage graph you can visualise in the console. DataZone extends this into a full data catalogue with business metadata, data discovery, and lineage across the entire organisation. For your specific pipeline, the lineage is already partially captured — your DynamoDB file_processing_registry tracks which files were processed and when, and the Glue Catalog knows which jobs created which tables. The gap is that you cannot currently trace a specific column value back to its origin file automatically.
+
+**Centrally governed namespace** is provided by the Glue Data Catalog itself acting as the central metastore, with Lake Formation providing the governance layer on top. Every table registered in the Glue Catalog is discoverable by any service — Athena, Glue, EMR, Redshift Spectrum — through the same namespace. The difference from Unity Catalog is that AWS requires you to configure Lake Formation explicitly for governance while Databricks makes it the default from day one.
 
 TODO FIX this 
 Gap 1 — CloudWatch alerting is documented but never implemented

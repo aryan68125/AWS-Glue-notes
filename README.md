@@ -299,6 +299,41 @@ S3 is not a filesystem. It is not a database. It is not block storage like EBS. 
 
 When you upload sales_data_1.csv to the path ```raw_data/sales_data/sales_data_1.csv``` in your bucket ```aws-glue-s3-bucket-one```, S3 stores it as a single object. The key is literally the string ```raw_data/sales_data/sales_data_1.csv```. The forward slashes are not real folder separators they are just characters in the key string. S3 has no concept of folders or directories. The AWS console shows you a folder-like interface because it groups objects that share a common prefix, but underneath there are no folders. There is just a flat collection of objects identified by their key strings.
 
+### How S3 works underneath?
+S3 is one of the most complex distributed systems ever built. Understanding its internals helps you understand its behaviour why large uploads need multipart, why listing objects is slower than getting them, why eventual consistency existed historically.
+
+**Physical storage** S3 stores every object across multiple physical devices in multiple Availability Zones within a region. When you upload a file to ```ap-south-1```, S3 automatically replicates it across at least three separate physical storage locations in Mumbai. You never configure this it happens automatically. This is why S3 achieves 99.999999999% durability eleven nines. Losing your data in S3 would require simultaneous physical failures across multiple independent data centres, which has essentially never happened.
+
+**The index** S3 maintains a distributed index that maps object keys to their physical locations. When you do a GET request for an object, S3 looks up the key in this index, finds the physical location, and retrieves the bytes. This lookup adds latency typically 5 to 50 milliseconds for the first byte which is why S3 is slower than EBS for random access. EBS is directly attached block storage with sub-millisecond latency. S3 goes through a network lookup before any data is returned.
+
+**Partitioning** S3 automatically partitions your objects across its internal infrastructure based on the key prefix. This is why the old advice was to add random prefixes to your keys if all your keys started with a date like ```2024-01-01/file1.csv```, all those keys would land in the same internal partition and you would hit throughput limits. Modern S3 automatically detects hot partitions and redistributes them, so this is less of a concern today. But your pipeline already uses good key structure ```raw_data/sales_data/sales_data_1.csv``` that distributes naturally.
+
+### S3 storage classes
+S3 has multiple storage classes designed for different access patterns and cost profiles. This matters for your pipeline's long-term cost management.
+
+**S3 Standard** is what your pipeline uses by default. It is designed for frequently accessed data low latency, high throughput, replicated across three AZs, no minimum storage duration. Your Bronze CSV files and Silver parquet files should live here while they are actively being processed and queried.
+
+**S3 Intelligent-Tiering** automatically moves objects between access tiers based on how often they are accessed. If an object has not been accessed for 30 days it moves to an infrequent access tier at lower cost. If it is accessed again it moves back to standard. It charges a small monitoring fee per object. For data lake files that are initially hot during ingestion and analysis but then rarely touched, this is cost-effective.
+
+**S3 Standard-IA** Infrequent Access is cheaper per GB stored but charges a retrieval fee per GB read. Designed for data you access less than once a month. Appropriate for older partitions of your Silver layer that are rarely queried.
+
+**S3 Glacier** Instant Retrieval is for archival data that needs to be retrieved occasionally with millisecond access. Significantly cheaper storage than Standard-IA but retrieval costs more.
+
+**S3 Glacier Flexible Retrieval** is for true cold archival where you can wait minutes to hours for retrieval. Very cheap storage, used for compliance archives and long-term backups.
+
+**S3 Glacier Deep Archive** is the cheapest storage in all of AWS approximately $0.00099 per GB-month in us-east-1. Retrieval takes 12 hours. Used for data that must be retained for regulatory reasons but will almost never be accessed.
+
+**Suggestion for what to use for data pipelines:** <br>
+For your pipeline a practical approach is to keep your Silver parquet files in S3 Standard for the current month, use a lifecycle rule to transition them to Standard-IA after 30 days, and to Glacier after 1 year if regulatory retention requires it.
+
+### S3 lifecycle rules
+```bash
+Prefix: silver_layer/sales_data/
+Rule 1: Transition to Standard-IA after 30 days
+Rule 2: Transition to Glacier Instant Retrieval after 90 days
+Rule 3: Delete after 365 days (if no regulatory requirement to keep longer)
+```
+
 ## AWS Glue
 ### **What is ETL/ELT?** <br>
 We want to **E**xtract the data and **L**oad that data somewhere and that loaded data should be **T**ransformed as per requirments.

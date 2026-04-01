@@ -294,6 +294,11 @@ If you see disk space errors, increase --job-disk-size. If you see memory errors
 
 For your current pipeline these errors will not appear. But when you move to larger datasets in future projects, reading these CloudWatch logs and knowing which parameter to adjust is a core data engineering operational skill.
 
+## AWS S3 Bucket
+S3 is not a filesystem. It is not a database. It is not block storage like EBS. It is a flat key-value store where the key is a string — the object key — and the value is the bytes of your file plus some metadata. That is the entire model. Every object in S3 is identified by three things: the bucket name, the object key, and optionally a version ID.
+
+When you upload sales_data_1.csv to the path ```raw_data/sales_data/sales_data_1.csv``` in your bucket ```aws-glue-s3-bucket-one```, S3 stores it as a single object. The key is literally the string ```raw_data/sales_data/sales_data_1.csv```. The forward slashes are not real folder separators they are just characters in the key string. S3 has no concept of folders or directories. The AWS console shows you a folder-like interface because it groups objects that share a common prefix, but underneath there are no folders. There is just a flat collection of objects identified by their key strings.
+
 ## AWS Glue
 ### **What is ETL/ELT?** <br>
 We want to **E**xtract the data and **L**oad that data somewhere and that loaded data should be **T**ransformed as per requirments.

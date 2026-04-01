@@ -334,6 +334,28 @@ Rule 2: Transition to Glacier Instant Retrieval after 90 days
 Rule 3: Delete after 365 days (if no regulatory requirement to keep longer)
 ```
 
+### S3 versioning
+Versioning is a bucket-level setting that keeps every version of every object instead of overwriting on upload. Your README actually mentions enabling versioning as a best practice.
+
+When versioning is enabled and you upload ```sales_data_1.csv``` twice, S3 keeps both versions. Each version gets a unique version ID a string like ```3HL4kqtJlcpXrof5_Y5KJI1bkJP4gMkR```. The latest version is returned on a normal GET request. To retrieve an older version you specify the version ID explicitly.
+
+For your pipeline versioning provides two benefits. First, if a corrupted file is uploaded with the same name as a previously good file, you can retrieve the previous good version rather than losing it. Second, it provides an audit trail — you can see every version of every file that was ever uploaded, when it was uploaded, and retrieve any historical version.
+
+The cost of versioning is that you pay for storage of every version. A file uploaded 10 times with versioning enabled costs 10 times the storage of a single version. Lifecycle rules can be configured to expire old versions automatically for example keeping the last 3 versions and deleting older ones.
+
+### S3 security model
+S3 has three layers of access control that work together.
+
+Bucket policies are JSON documents attached to a bucket that define who can do what to objects in that bucket. Your pipeline uses bucket policies to allow EventBridge to send events and to allow your Glue role to read and write. A bucket policy applies to the entire bucket or specific prefixes within it.
+
+IAM policies are attached to users, roles, or groups and define what S3 actions those identities can perform. Your ```AWSGlueRole``` has the ```LimitedS3PermissionPolicy``` which grants ```s3:GetObject```, ```s3:PutObject```, and ```s3:ListBucket``` on specific bucket ARNs. An S3 request is allowed only if both the IAM policy on the requester and the bucket policy on the bucket permit it.
+
+Block Public Access is a safety setting at the account and bucket level that prevents any configuration from accidentally making objects publicly accessible. You should always have Block Public Access enabled on all your data buckets. S3 public access has been the cause of some of the most significant data breaches in cloud computing history companies accidentally left sensitive data publicly readable. Block Public Access prevents this even if a misconfigured bucket policy would otherwise allow it.
+
+**Server-side encryption** S3 encrypts all objects at rest by default using SSE-S3, which is AWS-managed encryption. Every object stored in S3 is encrypted on the physical storage device. You can also use SSE-KMS which uses AWS Key Management Service and gives you control over the encryption keys, enabling audit logs of every encryption and decryption operation.
+
+
+
 ## AWS Glue
 ### **What is ETL/ELT?** <br>
 We want to **E**xtract the data and **L**oad that data somewhere and that loaded data should be **T**ransformed as per requirments.

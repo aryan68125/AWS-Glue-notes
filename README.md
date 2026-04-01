@@ -355,7 +355,6 @@ Block Public Access is a safety setting at the account and bucket level that pre
 **Server-side encryption** S3 encrypts all objects at rest by default using SSE-S3, which is AWS-managed encryption. Every object stored in S3 is encrypted on the physical storage device. You can also use SSE-KMS which uses AWS Key Management Service and gives you control over the encryption keys, enabling audit logs of every encryption and decryption operation.
 
 
-
 ## AWS Glue
 ### **What is ETL/ELT?** <br>
 We want to **E**xtract the data and **L**oad that data somewhere and that loaded data should be **T**ransformed as per requirments.

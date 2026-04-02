@@ -139,27 +139,4 @@ dynamodb.put_item(
 ```
 
 
-# Some important questions 
-1. **Master SQL until I can answer** How would you optimize a SQL join between two massive tables to avoid performance bottlenecks in databricks?
-2. **Master Delta Lake** 
-    - Bronze , Silver Gold layers
-    - Schema enforcement
-    - Time travel
-    - Explain the difference between bronze, silver and gold tables delta lake and why this architecture matters?
-3. **Skip Pandas and learn spark** How does spark's lazy execution model work and why is it important for processing large dataset efficiently.
-4. **Automate everything with databricks workflows** Describe how you would schedule and monitor a multi-step data pipeline in Databricks. What would you do if a step fails?
-5. **Build projects with business value** 
-    - Pick real dataset
-    - Tie to cost or time savings
-    - Move the business needle
-6. **Learn databricks compute model** 
-    - All purpose
-    - Job clusters
-    - execution plans and spot bottlenecks 
-    - cluster sizing 
-    - spot instance
-    - partition pruning
-    - Explain the difference between all purpose and job clusters in databricks. When would you use each and how do you optimize for cost?
-7. **Recommended sources :**
-    - Fundamentals of data engineering (Udemy)
-    - Databricks and spark bootcamp
+

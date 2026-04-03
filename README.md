@@ -346,14 +346,34 @@ The cost of versioning is that you pay for storage of every version. A file uplo
 ### S3 security model
 S3 has three layers of access control that work together.
 
-Bucket policies are JSON documents attached to a bucket that define who can do what to objects in that bucket. Your pipeline uses bucket policies to allow EventBridge to send events and to allow your Glue role to read and write. A bucket policy applies to the entire bucket or specific prefixes within it.
+**Bucket policies** are JSON documents attached to a bucket that define who can do what to objects in that bucket. Your pipeline uses bucket policies to allow EventBridge to send events and to allow your Glue role to read and write. A bucket policy applies to the entire bucket or specific prefixes within it.
 
-IAM policies are attached to users, roles, or groups and define what S3 actions those identities can perform. Your ```AWSGlueRole``` has the ```LimitedS3PermissionPolicy``` which grants ```s3:GetObject```, ```s3:PutObject```, and ```s3:ListBucket``` on specific bucket ARNs. An S3 request is allowed only if both the IAM policy on the requester and the bucket policy on the bucket permit it.
+**IAM policies** are attached to users, roles, or groups and define what S3 actions those identities can perform. Your ```AWSGlueRole``` has the ```LimitedS3PermissionPolicy``` which grants ```s3:GetObject```, ```s3:PutObject```, and ```s3:ListBucket``` on specific bucket ARNs. An S3 request is allowed only if both the IAM policy on the requester and the bucket policy on the bucket permit it.
 
-Block Public Access is a safety setting at the account and bucket level that prevents any configuration from accidentally making objects publicly accessible. You should always have Block Public Access enabled on all your data buckets. S3 public access has been the cause of some of the most significant data breaches in cloud computing history companies accidentally left sensitive data publicly readable. Block Public Access prevents this even if a misconfigured bucket policy would otherwise allow it.
+**Block Public Access** is a safety setting at the account and bucket level that prevents any configuration from accidentally making objects publicly accessible. You should always have Block Public Access enabled on all your data buckets. S3 public access has been the cause of some of the most significant data breaches in cloud computing history companies accidentally left sensitive data publicly readable. Block Public Access prevents this even if a misconfigured bucket policy would otherwise allow it.
 
 **Server-side encryption** S3 encrypts all objects at rest by default using SSE-S3, which is AWS-managed encryption. Every object stored in S3 is encrypted on the physical storage device. You can also use SSE-KMS which uses AWS Key Management Service and gives you control over the encryption keys, enabling audit logs of every encryption and decryption operation.
 
+### S3 performance characteristics that matter for Glue
+Understanding S3 performance helps you understand why your Glue jobs behave the way they do.
+
+**Request rate** S3 supports at least 3,500 PUT/COPY/POST/DELETE and 5,500 GET/HEAD requests per second per prefix. For your pipeline at 1000 files per day this is not even close to a concern. At massive scale — thousands of concurrent Glue workers all reading from the same prefix simultaneously — you would need to distribute reads across multiple prefixes to avoid throttling.
+
+**First byte latency** Getting the first byte of an object from S3 takes 5 to 50 milliseconds. This is the network round trip plus the index lookup. For your Glue job reading a 1MB CSV file this adds a negligible 50ms to a job that takes 3 minutes. For a Lambda function doing many small S3 reads in a tight loop, this latency compounds and can become significant.
+
+**Throughput** Once S3 starts streaming an object, throughput is very high — easily hundreds of MB/s per request, and multiple parallel requests can be made simultaneously. Glue reads your parquet files using parallel requests across all workers, each worker reading a different set of files concurrently. This is why columnar formats like parquet work so well with S3 — Glue can read only the columns it needs using byte-range requests rather than downloading the entire file.
+
+**Multipart upload** For files larger than 100MB, S3 recommends using multipart upload. Instead of uploading one large file as a single request — which would fail and require restarting if the connection drops — multipart upload splits the file into parts, uploads each part independently, and assembles them at the end. Glue handles this automatically when writing large parquet files. You do not need to implement it yourself.
+
+**S3 in the context of your pipeline** 
+
+Every design decision in your pipeline connects back to S3's characteristics.
+
+Your EventBridge rule fires on Object Created events from S3. This works because S3 publishes events to EventBridge automatically when versioning and EventBridge integration are enabled on the bucket. The event contains the bucket name and object key ```raw_data/sales_data/sales_data_1.csv ```which your Lambda extracts and passes to the Step Function, which passes it to Glue.
+
+Your Glue job reads exactly one file per execution using ```connection_options={"paths": [f"s3://{source_bucket}/{source_key}"], "recurse": False}```. This is a single S3 GET request for one specific object key. The recurse: False tells Glue not to list and read all objects under that prefix just the one file. This is the file-level ingestion pattern that makes your pipeline efficient and isolates failures to individual files.
+
+Your Silver layer is written to ```s3://data-sink-one/silver_layer/sales_data/``` partitioned by category. Partitioning in the context of S3 means Glue creates subfolders actually key prefixes like ```silver_layer/sales_data/category=Electronics/``` and writes parquet files into them. When Athena queries this table and filters by category, it reads only the objects under the matching prefix and skips all others. This is partition pruning instead of scanning all 51GB of Silver data, a query filtered to one category only reads that category's parquet files. This directly reduces your Athena cost because Athena charges per GB scanned.
 
 ## AWS Glue
 ### **What is ETL/ELT?** <br>

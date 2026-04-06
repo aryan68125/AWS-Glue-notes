@@ -6854,7 +6854,118 @@ TODO FIX this
 Gap 1 — CloudWatch alerting is documented but never implemented
 This was Gap 6 from the original list and it appears in the README as a TODO but there is no implementation section for it anywhere in Version 6. You have no automated alerting if the DLQ grows, if Glue jobs fail repeatedly, or if the Step Function starts failing. In production this means a silent failure — files stop landing in Silver S3 and nobody knows until someone manually checks the dashboard.
 
+## Some theory that needs to be covered before moving to version 7 implementation
+## Schema evolution implementation on AWS (Databricks equivalent)
+### What Delta Lake schema evolution actually does under the hood?
+Delta Lake maintains a transaction log a folder called ```_delta_log``` that stores the history of every operation on the table as JSON files. The schema is stored in this log, not in the parquet files themselves. When you write with ```mergeSchema=true```, Delta writes a new entry to the log that says "the schema is now this new wider schema." The old parquet files are untouched. At read time, Delta's reader looks at the current schema from the log and when it reads an old parquet file that is missing the new column, it fills in nulls for that column in memory. No data rewrite happens.
 
+This allows databricks to add new columns to a table without rewriting existing data files and without breaking existing queries.
+
+### The AWS Glue Catalog approach (the closest native equivalent)
+My pipeline already uses the Glue Catalog to register your Silver table ```silver_table_sales_data```
+
+The Glue Catalog stores table schemas and Glue has built-in schema evolution support through the ```updateBehavior``` parameter on the sink node.
+
+In my current Glue ETL script you already have this:
+```python
+SilverlayerdatasinkS3 = glueContext.getSink(
+    path="s3://data-sink-one/silver_layer/sales_data/",
+    connection_type="s3",
+    updateBehavior="LOG",   # ← this is the key parameter
+    partitionKeys=["category"],
+    enableUpdateCatalog=True,
+    transformation_ctx="SilverlayerdatasinkS3"
+)
+```
+The updateBehavior parameter controls exactly what happens when the incoming data has a different schema from what is registered in the Glue Catalog. 
+
+There are three options.
+- ```"LOG"``` the current setting : 
+    -  logs schema mismatches as warnings but does not fail the job and does not update the catalog schema. New columns in the incoming data are silently dropped. This is actually the worst behaviour for schema evolution because you lose data silently.
+- ```"UPDATE_IN_DATABASE"``` : 
+    -  this is what you want for schema evolution. When the incoming data has new columns that do not exist in the Glue Catalog table, Glue automatically adds those columns to the catalog schema. Existing parquet files are untouched. New parquet files contain the new columns. Athena handles the null-backfilling at read time for old files that predate the new column. This maps directly to what Delta's mergeSchema=true does.
+
+changes in the current AWS Glue script: 
+```python
+SilverlayerdatasinkS3 = glueContext.getSink(
+    path="s3://data-sink-one/silver_layer/sales_data/",
+    connection_type="s3",
+    updateBehavior="UPDATE_IN_DATABASE",  # ← changed from LOG
+    partitionKeys=["category"],
+    enableUpdateCatalog=True,
+    transformation_ctx="SilverlayerdatasinkS3"
+)
+SilverlayerdatasinkS3.setCatalogInfo(
+    catalogDatabase="aws-glue-tutorial-aditya",
+    catalogTableName="silver_table_sales_data"
+)
+SilverlayerdatasinkS3.setFormat("glueparquet", compression="snappy")
+SilverlayerdatasinkS3.writeFrame(deduped_dynamic_frame)
+``` 
+With ```UPDATE_IN_DATABASE``` Glue does the following when it writes:
+1. Compares the incoming DataFrame schema against the current Glue Catalog schema
+2. Identifies new columns in the incoming data
+3. Updates the Glue Catalog table definition to include the new columns
+4. Writes the new parquet files with the new columns included
+5. Old parquet files remain untouched they simply do not have the new column physically present
+
+When Athena queries the table after a schema evolution event, it reads the updated schema from the Glue Catalog and handles missing columns in old parquet files by returning null for those rows. Exactly the same behaviour as Delta Lake.
+
+## How downstream applications actually connect to your data? and what are the effects of schema evolution on them ?
+The short answer is that downstream applications almost never read parquet files directly from S3. They connect to a query engine that sits in front of S3 and abstracts the storage details away. The query engine reads the Glue Catalog for the schema, finds the S3 paths for the data, reads the parquet files, and returns results. The downstream application only ever sees SQL query results it has no idea whether the data lives in parquet, CSV, or any other format.
+
+The chain looks like this:
+```bash
+parquet files in S3
+        ↓
+Glue Catalog (schema + S3 location metadata)
+        ↓
+Query engine (Athena / Redshift Spectrum)
+        ↓
+Downstream application (QuickSight / BI tool / another Glue job)
+```
+Each layer only knows about the layer directly above it. QuickSight talks to Athena using SQL. Athena talks to the Glue Catalog to understand the schema. The Glue Catalog points Athena to the S3 paths. Athena reads the parquet files. QuickSight never knows S3 exists.
+
+### How each downstream application connects?
+**Amazon QuickSight** connects to your data through a data source connection. When you set up QuickSight you choose a data source type Athena is the most common for data lake pipelines like yours. You give QuickSight the Athena workgroup, the Glue database name, and the table name. QuickSight then issues SQL queries to Athena on your behalf whenever a dashboard is loaded or refreshed. It does not read S3 directly. It does not read the Glue Catalog directly. It sends SQL to Athena and receives a result set.
+
+Internally QuickSight has two modes. Direct Query mode sends a live SQL query to Athena every time someone opens a dashboard. SPICE mode imports the query result into QuickSight's own in-memory cache and serves dashboards from that cache. SPICE is faster for dashboards but requires a scheduled refresh to pick up new data.
+
+**Another Glue ETL job** your Gold layer job connects to your Silver table through the Glue Catalog directly. In the Glue script you would read from the catalog table like this:
+```python
+silver_df = glueContext.create_dynamic_frame.from_catalog(
+    database="aws-glue-tutorial-aditya",
+    table_name="silver_table_sales_data"
+)
+```
+Glue looks up the table in the Glue Catalog, finds the S3 path ```s3://data-sink-one/silver_layer/sales_data/```, finds the schema, and reads the parquet files. The Gold layer job transforms the Silver data into aggregated analytics-ready data and writes it to a Gold S3 path, registering a new table in the Glue Catalog.
+
+**Redshift Spectrum** connects to the Glue Catalog through an external schema. You run a one-time SQL command in Redshift:
+```sql
+CREATE EXTERNAL SCHEMA silver_data
+FROM DATA CATALOG
+DATABASE 'aws-glue-tutorial-aditya'
+IAM_ROLE 'arn:aws:iam::406868976171:role/RedshiftRole';
+```
+After that, Redshift users can query silver_data.```silver_table_sales_data``` using SQL directly in Redshift without loading any data into Redshift storage. Redshift Spectrum reads the parquet files from S3 at query time through the Glue Catalog.
+
+Apache Superset, Tableau, Power BI, or any other BI tool connects through an ODBC or JDBC driver for Athena. The tool connects to Athena as if it were a database, sends SQL queries, and receives results. The BI tool has no awareness of S3 or parquet.
+
+### What actually happens during schema evolution for each downstream application?
+What happens to each downstream consumer
+
+## Implementation Version 7 (Pending TODO)
+This implementation is going to be different from the rest of the implementation versions so far because in this I am planning to
+- Create an ETL pipeline which will use KPI to give insights and intelligeance and show aggregated data in a dashboard
+- I am planning to use AWS quicksight.
+
+### Create a source S3 bucket
+Here in this source S3 bucket all the log files generated by different tools will be dumped here every time the pipeline runs in gitlab
+Tools used : 
+- Code rabbit
+- Sonar Qube 
+- Snyk
+- Jira
 
 ## Creating an end-to-end ETL pipeline from source to dashboard (TODO)
 ```bash

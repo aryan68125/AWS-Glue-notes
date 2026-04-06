@@ -7057,6 +7057,65 @@ Tools used :
 - ![create_source_s3_bucket_5](images/production_grade_implementation_version_7/S3_source/create_source_s3_bucket_5.png)
 - ![create_source_s3_bucket_6](images/production_grade_implementation_version_7/S3_source/create_source_s3_bucket_6.png)
 - One thing to note is that in the screenshot you may see the bucket name where first letter is Capital but AWS does not allow Capital letter and underscore so I have changed the bucket name to ```deployement-logs-data-source```
+- ![activate_S3_eventBridge_notification](images/production_grade_implementation_version_7/S3_source/activate_S3_eventBridge_notification.png)
+- ![activate_S3_eventBridge_notification_2](images/production_grade_implementation_version_7/S3_source/activate_S3_eventBridge_notification_2.png)
+- Select the on option and click on save changes
+- After saving the changes you should see something like this 
+    - ![activate_S3_eventBridge_notification_3](images/production_grade_implementation_version_7/S3_source/activate_S3_eventBridge_notification_3.png)
+    - What Happens When You Turn This On?
+        - The Fundamental Shift in Event Routing
+            - When this toggle is Off, S3 event notifications work like this:
+                ```bash
+                S3 (file arrives) → directly → Lambda / SQS / SNS
+                                    (tight coupling)
+                ```
+            - When this toggle is On, S3 event notifications work like this:
+                ```bash
+                S3 (file arrives) → EventBridge Event Bus → Rules → Targets
+                                                (loose coupling)
+                ```
+                - S3 stops holding the routing logic. It just broadcasts every event to EventBridge's default event bus, and EventBridge decides what to do with it based on rules I define.
+        - What S3 Actually Sends to EventBridge?
+            - Every time an object is created, deleted, or modified in your bucket, S3 publishes a structured JSON event to the default EventBridge event bus. For my pipeline, the most important one is the Object Created event, which looks like this:
+            ```bash
+            {
+            "version": "0",
+            "id": "unique-event-id",
+            "source": "aws.s3",
+            "detail-type": "Object Created",
+            "account": "406868976171",
+            "region": "ap-south-1",
+            "detail": {
+                "bucket": {
+                "name": "aws-glue-s3-bucket-one"
+                },
+                "object": {
+                "key": "raw_data/sales_data/sales_data_1.csv",
+                "size": 102400,
+                "etag": "abc123..."
+                },
+                "reason": "PutObject"
+            }
+            }
+            ```
+            - This is why in my Lambda function and Step Function you can extract ```$.detail.bucket.name``` and ```$.detail.object.key``` those fields come directly from this payload.
+    - What EventBridge Does With That Event?
+        - EventBridge receives this and runs it through every rule I have defined. My rule ```ActivateLambdaFuncEventBridgeRules``` has this event pattern filter:
+        ```json
+        {
+        "source": ["aws.s3"],
+        "detail-type": ["Object Created"],
+        "detail": {
+            "bucket": { "name": ["aws-glue-s3-bucket-one"] },
+            "object": { "key": [{ "prefix": "raw_data/sales_data/" }] }
+        }
+        }
+        ```
+        - EventBridge checks every incoming event against this filter. If it matches meaning it's a file arriving specifically in ```raw_data/sales_data/``` in your bucket it routes the event to your SQS FIFO queue ```FileProcessingQueue.fifo```. If it does not match (say, a file arrives in a different prefix like ```raw_data/other/```), the event is silently dropped and nothing happens.
+
+### Create a EventBridge rule
+- ![event_bridge_1](images/production_grade_implementation_version_7/EventBridge/event_bridge_1.png)
+- ![event_bridge_2](images/production_grade_implementation_version_7/EventBridge/event_bridge_2.png)
 
 
 ## Creating an end-to-end ETL pipeline from source to dashboard (TODO)

@@ -7047,7 +7047,17 @@ Tools used :
 - Sonar Qube 
 - Snyk
 - Jira
-![create_source_s3_bucket](images/production_grade_implementation_version_7/S3_source/create_source_s3_bucket.png)
+
+#### Steps to create a S3 bucket
+- ![create_source_s3_bucket_1](images/production_grade_implementation_version_7/S3_source/create_source_s3_bucket_1.png)
+    - Click on create button 
+- ![create_source_s3_bucket_2](images/production_grade_implementation_version_7/S3_source/create_source_s3_bucket_2.png)
+- ![create_source_s3_bucket_3](images/production_grade_implementation_version_7/S3_source/create_source_s3_bucket_3.png)
+- ![create_source_s3_bucket_4](images/production_grade_implementation_version_7/S3_source/create_source_s3_bucket_4.png)
+- ![create_source_s3_bucket_5](images/production_grade_implementation_version_7/S3_source/create_source_s3_bucket_5.png)
+- ![create_source_s3_bucket_6](images/production_grade_implementation_version_7/S3_source/create_source_s3_bucket_6.png)
+- One thing to note is that in the screenshot you may see the bucket name where first letter is Capital but AWS does not allow Capital letter and underscore so I have changed the bucket name to ```deployement-logs-data-source```
+
 
 ## Creating an end-to-end ETL pipeline from source to dashboard (TODO)
 ```bash

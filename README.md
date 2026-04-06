@@ -6997,6 +6997,43 @@ If the Gold layer job selects all columns with ```select("*")``` or passes the D
 #### Redshift Spectrum
 Redshift Spectrum reads the schema from the Glue Catalog at query time, same as Athena. New columns appear automatically in the external table. Old rows return null for the new column. No action required. Existing queries that do not reference the new column continue working identically.
 
+### The real risk downstream queries that break
+Schema evolution can break downstream consumers in two specific situations
+#### Situation 1 : A column is renamed
+Say your upstream system renames discounted_price to sale_price in the CSV files. Your Glue ETL job with UPDATE_IN_DATABASE sees a new column called sale_price and an old column called discounted_price that is no longer being populated. It adds sale_price to the Glue Catalog schema. Old parquet files have discounted_price with real values. New parquet files have sale_price with real values.
+
+Now any Athena query or QuickSight dashboard that references discounted_price will return nulls for all new rows because new files only have sale_price. Any downstream aggregation that sums discounted_price across old and new data will produce wrong results silently — no error, just incorrect numbers. This is the most dangerous failure mode in schema evolution because the pipeline succeeds, the data lands in Silver, QuickSight shows a dashboard, but the numbers are wrong.
+
+#### Situation 2 : A column type changes incompatibly
+Say rating_count changes from string to integer in the upstream CSV. Your Glue ETL casts it to INT in the SQL transformation, same as before. But old parquet files stored rating_count as INT and the Glue Catalog says INT. New parquet files also say INT. No conflict here your transformation handles the casting before writing. This scenario is actually safe in your pipeline because you explicitly cast all types in the SQL transformation layer before writing to Silver.
+
+The dangerous version is if you were writing the raw CSV schema to Silver without transformation. Then a type change in the upstream CSV would create a type conflict in the Glue Catalog.
+
+## How to protect downstream applications from schema evolution surprises?
+The correct production approach is to separate schema evolution handling into explicit tiers.
+- Bronze layer : accept everything
+    - The Bronze layer stores raw CSV files exactly as received with no transformation. Schema evolution in the source is recorded here automatically. Bronze is schema-agnostic by design.
+- Silver layer : enforce a contract
+    - The Silver layer enforces a stable schema contract. Your DQ rule ```ColumnCount >= 16``` catches files with fewer columns than expected. Your SQL transformation explicitly selects and casts specific named columns so even if the upstream CSV adds 5 new columns, your Silver layer only contains the 16 columns you explicitly selected. New columns in the source do not automatically flow to Silver unless you deliberately add them to the SQL SELECT statement.
+
+    - This is actually a schema evolution protection that your pipeline already has by accident. Your SQL query explicitly names every column:
+    ```sql
+        SELECT
+        product_id,
+        product_name,
+        category,
+        about_product,
+        user_id,
+        user_name,
+        review_id,
+        ...
+        FROM myDataSource;
+    ```
+    - Any new column in the CSV that is not in this SELECT statement is silently dropped before writing to Silver. Your Silver schema is controlled entirely by this SQL query, not by whatever the upstream sends. This is the correct design for a production Silver layer.
+- Gold layer : stable aggregations for dashboards
+    - The Gold layer further transforms Silver into specific aggregated tables built for specific business questions. Even if Silver schema evolves, the Gold layer SQL explicitly selects the columns it needs for each aggregation. QuickSight connects to Gold tables, not Silver. Gold tables change only when you deliberately update the Gold layer ETL job, not when the Silver schema changes.
+    - This three-layer isolation is why the Medallion architecture is the standard for production data platforms. Each layer acts as a firewall that absorbs upstream changes before they reach downstream consumers. Your upstream can change schemas freely, Bronze absorbs everything, Silver normalises and contracts the schema, Gold serves stable aggregations, and QuickSight dashboards never break from upstream changes.
+
 ## Implementation Version 7 (Pending TODO)
 This implementation is going to be different from the rest of the implementation versions so far because in this I am planning to
 - Create an ETL pipeline which will use KPI to give insights and intelligeance and show aggregated data in a dashboard

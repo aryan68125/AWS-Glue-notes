@@ -6952,7 +6952,50 @@ After that, Redshift users can query silver_data.```silver_table_sales_data``` u
 Apache Superset, Tableau, Power BI, or any other BI tool connects through an ODBC or JDBC driver for Athena. The tool connects to Athena as if it were a database, sends SQL queries, and receives results. The BI tool has no awareness of S3 or parquet.
 
 ### What actually happens during schema evolution for each downstream application?
-What happens to each downstream consumer
+What happens to each downstream consumer when my Glue ETL job adds a new column to the silver table using ```UPDATE_IN_DATABASE```.
+
+#### Athena
+Athena reads the schema from the Glue Catalog at query time not at connection time. Every time a query runs, Athena fetches the current schema from the Glue Catalog and uses it to interpret the parquet files.
+
+When a new column is added:
+
+Old parquet files physically do not contain the new column. When Athena reads these files and the schema says the column exists, Athena returns null for that column for every row in those old files. No error. No job failure. Just nulls for old rows, real values for new rows.
+```sql
+-- Before schema evolution: 16 columns
+SELECT product_id, rating FROM silver_table_sales_data;
+-- Works fine, returns data
+
+-- After a new column called "seller_id" is added
+SELECT product_id, rating, seller_id FROM silver_table_sales_data;
+-- Works fine
+-- Old rows: seller_id = null
+-- New rows: seller_id = actual value
+```
+Athena is fully forward and backward compatible with schema evolution on parquet files because parquet stores column names inside each file. When Athena reads an old parquet file and asks for a column that does not exist in that file, it returns null rather than failing.
+
+#### QuickSight in Direct Query mode
+QuickSight sends SQL to Athena. Since Athena handles the schema evolution transparently, QuickSight is also unaffected. The new column will appear in the dataset automatically the next time QuickSight refreshes its dataset schema from Athena.
+
+However there is a subtlety. QuickSight caches the list of available columns in its dataset definition. If you added a new column to the Silver table, QuickSight does not automatically add that column to existing datasets. You need to go to ```QuickSight → Datasets → your dataset → Edit → Sync ```with Athena to pull in the new column. Existing dashboards that do not reference the new column continue working without any change. Dashboards that want to use the new column need the dataset to be refreshed first.
+
+#### QuickSight in SPICE mode
+SPICE mode imports data into QuickSight's cache. The cache contains only the columns that existed when the last SPICE refresh ran. If a new column is added to your Silver table after the last SPICE refresh, SPICE does not know about it. The new column will appear only after the next scheduled or manual SPICE refresh. Until then dashboards see the old cached data without the new column.
+
+This is the one downstream consumer where schema evolution requires explicit action a SPICE refresh before the new column is available.
+
+#### Another Glue ETL job reading Silver
+If your Gold layer Glue job reads from the Silver Glue Catalog table, it reads the current schema from the catalog at job start time. After schema evolution, the next run of the Gold layer job will see the new column in the Silver table automatically.
+
+The question is what the Gold layer job does with the new column. If the job explicitly selects specific columns:
+```python
+gold_df = silver_df.select("product_id", "category", "rating", "discounted_price")
+```
+The new column is simply ignored it is never selected and never propagates to the Gold layer. Your Gold layer job keeps working as before without any change.
+
+If the Gold layer job selects all columns with ```select("*")``` or passes the DataFrame through without explicit column selection, the new column automatically flows through to the Gold layer. Whether this is desirable depends on your intent.
+
+#### Redshift Spectrum
+Redshift Spectrum reads the schema from the Glue Catalog at query time, same as Athena. New columns appear automatically in the external table. Old rows return null for the new column. No action required. Existing queries that do not reference the new column continue working identically.
 
 ## Implementation Version 7 (Pending TODO)
 This implementation is going to be different from the rest of the implementation versions so far because in this I am planning to

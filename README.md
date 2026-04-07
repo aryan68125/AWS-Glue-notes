@@ -5640,6 +5640,31 @@ dynamodb.put_item(
 ![s3_event_bridge_setup](images/production_grade_implementation_version_6/S3/s3_event_bridge_setup.png)
 - This setup allows source S3 bucket to send events to event bridge.
 
+#### EventBridge 
+- ![event_bridge_setup_1](images/production_grade_implementation_version_6/EventBridge/event_bridge_setup_1.png)
+- Event pattern (filter)
+    - ```json
+      {
+        "source": ["aws.s3"],
+        "detail-type": ["Object Created"],
+        "detail": {
+            "bucket": {
+            "name": ["aws-glue-s3-bucket-one"]
+            },
+            "object": {
+            "key": [{
+                "prefix": "raw_data/sales_data/"
+            }]
+            }
+        }
+      }
+      ```
+- ![event_bridge_setup_2](images/production_grade_implementation_version_6/EventBridge/event_bridge_setup_2.png)
+- ![event_bridge_setup_3](images/production_grade_implementation_version_6/EventBridge/event_bridge_setup_3.png)
+- ![event_bridge_setup_4](images/production_grade_implementation_version_6/EventBridge/event_bridge_setup_4.png)
+    - When creating the event bridge for the first time make sure you select this option ```Create a new role for this specific resource``` and let AWS create a new role for this Eventbridge rule on our behalf automatically.
+- ![event_bridge_setup_5](images/production_grade_implementation_version_6/EventBridge/event_bridge_setup_5.png)
+
 #### SQS 
 
 **(FileProcessingQueue.fifo)**
@@ -6809,16 +6834,16 @@ Cost breakdown — 1000 files/day :
 AWS Cost Breakdown — Version 6 ($6,646/month)
 
 | Service           | What it does                                           | Monthly cost |
-|------------------|--------------------------------------------------------|--------------|
-| AWS Glue ETL     | 10 workers × 3 min × 1000 files × $0.44/DPU-hr        | $6,600       |
-| S3               | Source + Silver storage, ~51GB + requests             | $38          |
-| Step Functions   | 200 executions × 32 transitions                       | $5           |
-| Lambda           | 1000 invocations × 512MB × 10s                        | $3           |
-| CloudWatch       | 184MB log ingest                                      | $0.14        |
-| DynamoDB         | 2000 writes + 1000 reads                              | $0.09        |
-| SQS FIFO         | 3000 requests                                         | $0.04        |
-| EventBridge      | 1000 events                                           | $0.03        |
-| **Total**        |                                                        | **$6,646**   |
+|------------------|---------------------------------------------------------|--------------|
+| AWS Glue ETL     | 10 workers × 3 min × 1000 files × $0.44/DPU-hr          | $6,600       |
+| S3               | Source + Silver storage, ~51GB + requests               | $38          |
+| Step Functions   | 200 executions × 32 transitions                         | $5           |
+| Lambda           | 1000 invocations × 512MB × 10s                          | $3           |
+| CloudWatch       | 184MB log ingest                                        | $0.14        |
+| DynamoDB         | 2000 writes + 1000 reads                                | $0.09        |
+| SQS FIFO         | 3000 requests                                           | $0.04        |
+| EventBridge      | 1000 events                                             | $0.03        |
+| **Total**        |                                                         | **$6,646**   |
 
 Glue is 99% of your entire AWS bill. Every other service combined costs $46/month. This is the defining characteristic of a Glue-heavy architecture the compute dominates everything else completely.
 

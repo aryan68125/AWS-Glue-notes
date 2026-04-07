@@ -7223,6 +7223,29 @@ Since Content-based deduplication is Disabled and EventBridge is not providing a
 - Enable Content-Based Deduplication
 - Go to DataProcessingJobQueue.fifo → Edit → FIFO queue settings → toggle Content-based deduplication to ON.
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## Creating an end-to-end ETL pipeline from source to dashboard (TODO)
 ```bash
 Sources (OLTP DB, CSV, APIs, logs)

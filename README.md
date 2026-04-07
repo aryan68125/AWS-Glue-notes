@@ -7059,7 +7059,7 @@ The correct production approach is to separate schema evolution handling into ex
     - The Gold layer further transforms Silver into specific aggregated tables built for specific business questions. Even if Silver schema evolves, the Gold layer SQL explicitly selects the columns it needs for each aggregation. QuickSight connects to Gold tables, not Silver. Gold tables change only when you deliberately update the Gold layer ETL job, not when the Silver schema changes.
     - This three-layer isolation is why the Medallion architecture is the standard for production data platforms. Each layer acts as a firewall that absorbs upstream changes before they reach downstream consumers. Your upstream can change schemas freely, Bronze absorbs everything, Silver normalises and contracts the schema, Gold serves stable aggregations, and QuickSight dashboards never break from upstream changes.
 
-## Implementation Version 7 (Pending TODO)
+## Implementation Version 7
 This implementation is going to be different from the rest of the implementation versions so far because in this I am planning to
 - Create an ETL pipeline which will use KPI to give insights and intelligeance and show aggregated data in a dashboard
 - I am planning to use AWS quicksight.
@@ -7112,10 +7112,10 @@ Tools used :
             "region": "ap-south-1",
             "detail": {
                 "bucket": {
-                "name": "aws-glue-s3-bucket-one"
+                "name": "deployement-logs-data-source"
                 },
                 "object": {
-                "key": "raw_data/sales_data/sales_data_1.csv",
+                "key": "raw_data/sonar_qube_logs/sonarqube_issues_part1.json",
                 "size": 102400,
                 "etag": "abc123..."
                 },
@@ -7124,24 +7124,104 @@ Tools used :
             }
             ```
             - This is why in my Lambda function and Step Function you can extract ```$.detail.bucket.name``` and ```$.detail.object.key``` those fields come directly from this payload.
-    - What EventBridge Does With That Event?
-        - EventBridge receives this and runs it through every rule I have defined. My rule ```ActivateLambdaFuncEventBridgeRules``` has this event pattern filter:
-        ```json
-        {
+
+### Create a EventBridge rule
+- What EventBridge Does With the Event sent by source S3 bucket?
+    - EventBridge receives this and runs it through every rule I have defined. My rule ```sonar_qube_event_rules``` has this event pattern filter:
+    ```json
+    {
+    "source": ["aws.s3"],
+    "detail-type": ["Object Created"],
+    "detail": {
+        "bucket": {
+        "name": ["deployement-logs-data-source"]
+        },
+        "object": {
+        "key": [{
+            "prefix": "raw_data/sonar_qube_logs/"
+        }]
+        }
+    }
+    }
+    ```
+    - EventBridge checks every incoming event against this filter. If it matches meaning it's a file arriving specifically in ```raw_data/sonar_qube_logs/``` in my bucket it routes the event to my SQS FIFO queue ```DataProcessingJobQueue.fifo```. If it does not match (say, a file arrives in a different prefix like ```raw_data/other/```), the event is silently dropped and nothing happens.
+
+#### Steps to create an EventBridge rule for sonarqube logs data
+- ![event_bridge_1](images/production_grade_implementation_version_7/EventBridge/event_bridge_1.png)
+- ![event_bridge_2](images/production_grade_implementation_version_7/EventBridge/event_bridge_2.png)
+- ![event_bridge_source_1](images/production_grade_implementation_version_7/EventBridge/event_bridge_source_1.png)
+    - I am setting the source from where the events will be captured to be my source S3 bucket named ```deployement-logs-data-source```
+    - The Event Filter pattern I used for this event bridge rule is as below:
+    ```json
+    {
         "source": ["aws.s3"],
         "detail-type": ["Object Created"],
         "detail": {
-            "bucket": { "name": ["aws-glue-s3-bucket-one"] },
-            "object": { "key": [{ "prefix": "raw_data/sales_data/" }] }
+            "bucket": {
+            "name": ["deployement-logs-data-source"]
+            },
+            "object": {
+            "key": [{
+                "prefix": "raw_data/sonar_qube_logs/"
+            }]
+            }
         }
+    }
+    ```
+- ![event_bridge_target_1](images/production_grade_implementation_version_7/EventBridge/event_bridge_target_1.png)
+- ![event_bridge_target_2](images/production_grade_implementation_version_7/EventBridge/event_bridge_target_2.png)
+- ![event_bridge_target_3](images/production_grade_implementation_version_7/EventBridge/event_bridge_target_3.png)
+- ![event_bridge_target_4](images/production_grade_implementation_version_7/EventBridge/event_bridge_target_4.png)
+
+### SQS 
+There are 2 SQS queues that will be used in here:
+- One will be for data processing 
+- Another will be for DLQ 
+#### Creating SQS named DataProcessingJobQueue.fifo
+- ![DataProcessingJobQueue_1](images/production_grade_implementation_version_7/sqs/DataProcessingJobQueue_1.png)
+- ![DataProcessingJobQueue_2](images/production_grade_implementation_version_7/sqs/DataProcessingJobQueue_2.png)
+- ![DataProcessingJobQueue_3](images/production_grade_implementation_version_7/sqs/DataProcessingJobQueue_3.png)
+- Access policy for the queue :
+    - ```json
+        {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+            "Sid": "AllowEventBridgeToSend",
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "events.amazonaws.com"
+            },
+            "Action": "sqs:SendMessage",
+            "Resource": "arn:aws:sqs:ap-south-1:746244690650:DataProcessingJobQueue.fifo",
+            "Condition": {
+                "ArnEquals": {
+                "aws:SourceArn": "arn:aws:events:ap-south-1:746244690650:rule/sonar_qube_event_rules"
+                }
+            }
+            }
+        ]
         }
-        ```
-        - EventBridge checks every incoming event against this filter. If it matches meaning it's a file arriving specifically in ```raw_data/sales_data/``` in your bucket it routes the event to your SQS FIFO queue ```FileProcessingQueue.fifo```. If it does not match (say, a file arrives in a different prefix like ```raw_data/other/```), the event is silently dropped and nothing happens.
+      ```
+    
+#### Creating SQS named DataProcessingJobQueue.fifo
 
-### Create a EventBridge rule
-- ![event_bridge_1](images/production_grade_implementation_version_7/EventBridge/event_bridge_1.png)
-- ![event_bridge_2](images/production_grade_implementation_version_7/EventBridge/event_bridge_2.png)
+## Issues I faced when implementing Version 7 
+### Event messages from the source S3 on file upload were not being shown in ```DataProcessingJobQueue.fifo``` sqs queue
+#### Cause for this issue 
+Content-Based Deduplication is OFF : To let EventBridge send messages to your SQS FIFO queue, you must enable content-based deduplication.
 
+Here is what is happening under the hood: <br>
+When EventBridge sends a message to a FIFO queue, it does not provide a MessageDeduplicationId in the API call. FIFO queues have two ways to handle deduplication: <br>
+Option 1: Caller provides MessageDeduplicationId  ← EventBridge does NOT do this <br>
+Option 2: Queue uses Content-Based Deduplication  ← You must enable this <br>
+
+Since Content-based deduplication is Disabled and EventBridge is not providing a deduplication ID, SQS is rejecting every message from EventBridge silently. The file arrives, EventBridge fires, but SQS refuses the message because the deduplication ID is missing.
+
+#### Solution
+![sqs_fifo_enable_content_based_duplication](images/production_grade_implementation_version_7/sqs/sqs_fifo_enable_content_based_duplication.png)
+- Enable Content-Based Deduplication
+- Go to DataProcessingJobQueue.fifo → Edit → FIFO queue settings → toggle Content-based deduplication to ON.
 
 ## Creating an end-to-end ETL pipeline from source to dashboard (TODO)
 ```bash

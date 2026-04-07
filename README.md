@@ -7204,7 +7204,56 @@ There are 2 SQS queues that will be used in here:
         }
       ```
     
-#### Creating SQS named DataProcessingJobQueue.fifo
+#### Creating SQS named DataProcessingDLQ.fifo
+- ![DataProcessingDLQ_1](images/production_grade_implementation_version_7/sqs/DataProcessingDLQ_1.png)
+- ![DataProcessingDLQ_2](images/production_grade_implementation_version_7/sqs/DataProcessingDLQ_2.png)
+- ![DataProcessingDLQ_3](images/production_grade_implementation_version_7/sqs/DataProcessingDLQ_3.png)
+- Access policy for the queue :
+    - ```json
+      {
+        "Version": "2012-10-17",
+        "Id": "__default_policy_ID",
+        "Statement": [
+            {
+            "Sid": "__owner_statement",
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::746244690650:root"
+            },
+            "Action": "SQS:*",
+            "Resource": "arn:aws:sqs:ap-south-1:746244690650:DataProcessingDLQ.fifo"
+            },
+            {
+            "Sid": "AllowEventBridgeToSendMessage",
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "events.amazonaws.com"
+            },
+            "Action": "sqs:SendMessage",
+            "Resource": "arn:aws:sqs:ap-south-1:746244690650:DataProcessingDLQ.fifo",
+            "Condition": {
+                "ArnEquals": {
+                "aws:SourceArn": "arn:aws:events:ap-south-1:746244690650:rule/sonar_qube_event_rules"
+                }
+            }
+            },
+            {
+            "Sid": "AWSEvents_ActivateLambdaFuncEventBridgeRules_dlq_41c9320f-edd2-4fde-ad71-2985e68b1d7c",
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "events.amazonaws.com"
+            },
+            "Action": "sqs:SendMessage",
+            "Resource": "arn:aws:sqs:ap-south-1:746244690650:DataProcessingDLQ.fifo",
+            "Condition": {
+                "ArnEquals": {
+                "aws:SourceArn": "arn:aws:events:ap-south-1:746244690650:rule/sonar_qube_event_rules"
+                }
+            }
+            }
+        ]
+        }
+      ```
 
 ## Issues I faced when implementing Version 7 
 ### Event messages from the source S3 on file upload were not being shown in ```DataProcessingJobQueue.fifo``` sqs queue

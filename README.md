@@ -7255,6 +7255,14 @@ There are 2 SQS queues that will be used in here:
         }
       ```
 
+### Lambda function
+- Since SQS can't trigger step functions directly I am using Lambda function to trigger the Step function instead
+
+#### Steps to create lambda function named ```TriggerProcessSonarQubeLogStepFunction```
+- ![create_lambda_function_1](images/production_grade_implementation_version_7/LambdaFunction/create_lambda_function_1.png)
+- ![create_lambda_function_2](images/production_grade_implementation_version_7/LambdaFunction/create_lambda_function_2.png)
+![create_lambda_function_3](images/production_grade_implementation_version_7/LambdaFunction/create_lambda_function_3.png)
+
 ## Issues I faced when implementing Version 7 
 ### Event messages from the source S3 on file upload were not being shown in ```DataProcessingJobQueue.fifo``` sqs queue
 #### Cause for this issue 

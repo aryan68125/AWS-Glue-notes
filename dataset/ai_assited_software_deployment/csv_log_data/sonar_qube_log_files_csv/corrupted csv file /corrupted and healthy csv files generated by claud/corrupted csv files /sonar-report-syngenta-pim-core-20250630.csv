@@ -1,0 +1,108 @@
+scan_date,project_key,branch,type,severity,file,line,message,rule,status,effort,debt,tags
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,BUG,MAJOR,src/auth/UserService.java,923,XXE vulnerability: XML parser does not disable external entities,java:S3649,CONFIRMED,28min,28min,security
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,CODE_SMELL,CRITICAL,src/search/ElasticSearchService.java,859,Weak hash algorithm MD5 used for product fingerprinting,,OPEN,,19min,"security,sql-injection"
+01-27-25,syngenta-pim-core,feature/ai-enrichment,VULNERABILITY,INFO,src/api/ProductController.java,943,"Exception caught; message: ""error"" & <code>",java:S4508,CONFIRMED,67min,67min,security
+2025-06-30T08:30:00Z,syngenta-pim-core,  nan  ,CODE_SMELL,MINOR,src/model/Variant.java,678,Weak hash algorithm MD5 used for product fingerprinting,java:S3649,closed,N/A,0,"bug,numeric"
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,VULNERABILITY,MINOR,src/catalog/ProductRepository.java,802,Integer overflow risk in price calculation,java:S3655,REOPENED,49min,49min,"security,credentials"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,VULNERABILITY,,src/auth/UserService.java,24,JWT token validated without expiry check,java:S5659,OPEN,52min,52min,"security,cryptography"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,VULNERABILITY,MAJOR,src/catalog/CategoryService.java,479,Thread.sleep() called with lock held,java:S5131,CONFIRMED,20,unknown,"security,deserialization"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,CODE_SMELL,MAJOR,src/util/DateUtils.java,54,Magic number 86400 should be extracted as a named constant,java:S1874,,TBD,N/A,convention
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,CODE_SMELL,MAJOR,src/catalog/CategoryService.java,685,Weak hash algorithm MD5 used for product fingerprinting,java:S2583,OPEN,31min,31min,
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,BUG,CRITICAL,src/api/AttributeController.java,631,Resource leak: InputStream never closed,java:S3776,REOPENED,13min,13min,"bug,multi-threading"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,VULNERABILITY,MAJOR,src/catalog/ProductCatalogService.java,469,Optional.get() called without isPresent() check,java:S107,REOPENED,82min,82min,"bug,multi-threading"
+2025-06-30T08:30:00Z,  syngenta-pim-core  ,feature/ai-enrichment,CODE_SMELL,CRITICAL,src/model/Product.java,555,Weak hash algorithm MD5 used for product fingerprinting,java:S2755,CONFIRMED,34min,34min,"bug,multi-threading"
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,CODE_SMELL,CRITICAL,src/util/DateUtils.java,442,Deserialization of user-controlled data without validation,java:S2068,CONFIRMED,28min,28min,"security,cryptography"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,VULNERABILITY,MAJOR,src/search/ElasticSearchService.java,357,Cyclomatic complexity 28 exceeds threshold of 20,java:S1176,OPEN,19min,19min,"maintainability,deprecated"
+2025-06-30T08:30:00Z,syngenta-pim-core,main,BUG,INFO,src/sync/ExternalSyncJob.java,82,Thread.sleep() called with lock held,java:S1874,REOPENED,79min,,
+2025-06-30T08:30:00Z,syngenta-pim-core,,VULNERABILITY,MINOR,src/enrichment/ImageProcessingService.java,904,Resource leak: InputStream never closed,  java:S2276  ,OPEN,46min,,"bug,null-pointer"
+2025-06-30T08:30:00Z,syngenta-pim-core,main,CODE_SMELL,INFO,src/auth/UserService.java,578,XXE vulnerability: XML parser does not disable external entities,java:S4508,RESOLVED,76min,76min,"maintainability,deprecated"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,VULNERABILITY,CRITICAL,src/sync/ExternalSyncJob.java,994,Null pointer dereference: method may return null,java:S2184,CONFIRMED,,25min,"maintainability,deprecated"
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,BUG,INFO,src/model/Category.java,312,JWT token validated without expiry check,java:S2583,OPEN,,58min,"security,xxe"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,BUG,MINOR,src/util/DateUtils.java,834,Cyclomatic complexity 28 exceeds threshold of 20,java:S100,OPEN,67min,67min,convention
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,BUG,CRITICAL,src/model/Product.java,122,Cyclomatic complexity 28 exceeds threshold of 20,,REOPENED,70min,70min,
+2025-06-30T08:30:00Z,syngenta-pim-core,main,CODE_SMELL,INFO,src/util/DateUtils.java,582,Cyclomatic complexity 28 exceeds threshold of 20,java:S2885,OPEN,64min,64min,"security,credentials"
+2025-06-30T08:30:00Z,syngenta-pim-core,main,BUG,INFO,src/catalog/CategoryService.java,807,Magic number 86400 should be extracted as a named constant,,open,22min,22min,bug
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,123,,src/api/ProductController.java,?,Method name ProcessData does not follow camelCase convention,java:S3655,CONFIRMED,79min,79min,"security,sql-injection"
+2025-06-30T08:30:00Z,syngenta-pim-core,  feature/ai-enrichment  ,BUG,MAJOR,src/pricing/PricingCalculator.java,427,Missing Javadoc for public method,java:S1643,,85min,85min,"security,owasp-a9"
+2025-06-30T08:30:00Z,syngentaPimCore,feature/bulk-import,BUG,MAJOR,src/catalog/ProductCatalogService.java,876,Optional.get() called without isPresent() check,java:S4790,REOPENED,55min,,
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,CODE_SMELL,MINOR,src/model/Variant.java,256,Optional.get() called without isPresent() check,java:S2259,CONFIRMED,46min,46min,"security,injection"
+2025-06-30T08:30:00Z,syngenta-pim-core,main,CODE_SMELL,HIGH,src/pricing/PricingCalculator.java,TBD,Deserialization of user-controlled data without validation,java:S1135,CONFIRMED,,73min,"maintainability,deprecated"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,VULNERABILITY,,src/catalog/ProductCatalogService.java,294,Optional.get() called without isPresent() check,java:S1135,OPEN,73min,73min,"security,owasp-a9"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,BUG,MINOR,src/api/ProductController.java,434,Empty catch block suppresses exception,java:S4502,OPEN,88min,,"security,injection"
+2025-06-30T08:30:00Z,syngenta-pim-core,main,CODE_SMELL,INFO,src/auth/UserService.java,284,Missing Javadoc for public method,java:S109,,28min,28min,"bug,numeric"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,VULNERABILITY,INFO,src/model/Category.java,841,Thread.sleep() called with lock held,java:S3649,OPEN,31min,31min,
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,VULNERABILITY,MAJOR,src/model/Variant.java,894,Resource leak: InputStream never closed,java:S2068,REOPENED,61min,61min,"bug,multi-threading"
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,VULNERABILITY,Error,src/api/CategoryController.java,431,Optional.get() called without isPresent() check,java:S107,CONFIRMED,88min,88min,"security,sql-injection"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,BUG,INFO,src/search/ElasticSearchService.java,431,Cyclomatic complexity 28 exceeds threshold of 20,java:S100,OPEN,13min,13min,"security,owasp-a9"
+2025-06-30T08:30:00Z,syngenta-pim-core,,VULNERABILITY,MAJOR,src/auth/UserService.java,772,Magic number 86400 should be extracted as a named constant,java:S2972,REOPENED,70min,70min,"bug,null-pointer"
+2025-06-30T08:30:00Z,SYNGENTA-PIM-CORE,feature/bulk-import,VULNERABILITY,CRITICAL,src/util/StringSanitizer.java,435,Cyclomatic complexity 28 exceeds threshold of 20,java:S2229,CONFIRMED,70min,70min,performance
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,CODE_SMELL,MINOR,src/api/AttributeController.java,745,Weak hash algorithm MD5 used for product fingerprinting,java:S2229,OPEN,82min,82min,
+2025-06-30T08:30:00Z,syngenta-pim-core,main,123,CRITICAL,src/notification/EmailService.java,25,Cyclomatic complexity 28 exceeds threshold of 20,java:S3655,REOPENED,13min,13min,"security,sql-injection"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,VULNERABILITY,CRITICAL,src/model/Product.java,752,Weak hash algorithm MD5 used for product fingerprinting,java:S1643,,55min,55min,"bug,concurrency"
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,CODE_SMELL,CRITICAL,src/auth/JwtAuthFilter.java,711,Deserialization of user-controlled data without validation,java:S109,REOPENED,46min,46min,"bug,spring"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,BUG,MINOR,src/util/DateUtils.java,834,Cyclomatic complexity 28 exceeds threshold of 20,java:S100,OPEN,67min,67min,convention
+2025-06-30T08:30:00Z,syngenta-pim-core,,VULNERABILITY,CRITICAL,src/sync/ExternalSyncJob.java,LINE_NUM,Deprecated API usage: HttpClient constructor,java:S109,REOPENED,37min,37min,"security,credentials"
+2025-06-30T08:30:00Z,syngenta-pim-core,main,BUG,LOW,src/catalog/ProductRepository.java,551,Missing Javadoc for public method,java:S2755,CONFIRMED,82min,82min,"security,xxe"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,CODE_SMELL,CRITICAL,src/api/ProductController.java,244,Cyclomatic complexity 28 exceeds threshold of 20,java:S1874,OPEN,82min,82min,security
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,CODE_SMELL,CRITICAL,src/enrichment/AiEnrichmentService.java,149,Deserialization of user-controlled data without validation,java:S1068,OPEN,67min,67min,"maintainability,duplication"
+2025-06-30T08:30:00Z,syngenta-pim-core,  main  ,CODE_SMELL,MINOR,src/notification/EmailService.java,TBD,Weak hash algorithm MD5 used for product fingerprinting,java:S109,REOPENED,49min,49min,"bug,null-pointer"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,VULNERABILITY,MINOR,src/catalog/CategoryService.java,812,Optional.get() called without isPresent() check,,CONFIRMED,25min,,"maintainability,duplication"
+2025-06-30T08:30:00Z,syngenta-pim-core,main,BUG,INFO,src/export/PdfExportService.java,128,XXE vulnerability: XML parser does not disable external entities,java:S1176,OPEN,49min,49min,"bug,spring"
+01-27-25,syngenta-pim-core,feature/bulk-import,BUG,INFO,src/notification/EmailService.java,441,Deprecated API usage: HttpClient constructor,java:S1192,CONFIRMED,49min,49min,"security,auth"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,VULNERABILITY,INFO,src/auth/UserService.java,654,Duplicated string literal appears 5 times,java:S2068,REOPENED,0,0,"maintainability,duplication"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,VULNERABILITY,MINOR,src/config/SecurityConfig.java,555,Thread.sleep() called with lock held,java:S3776,CONFIRMED,79min,79min,bug
+2025-06-30T08:30:00Z,syngenta-pim-core,main,VULNERABILITY,MAJOR,src/batch/ProductImportJob.java,520,Unused private field should be removed,java:S4790,REOPENED,28min,28min,"bug,concurrency"
+2025-06-30T08:30:00Z,syngenta-pim-core,main,VULNERABILITY,,src/util/StringSanitizer.java,571,Magic number 86400 should be extracted as a named constant,java:S2068,CONFIRMED,10min,10min,"security,credentials"
+2025-06-30T08:30:00Z,syngenta-pim-core,  feature/ai-enrichment  ,VULNERABILITY,MAJOR,src/config/SecurityConfig.java,774,Magic number 86400 should be extracted as a named constant,java:S1643,CONFIRMED,19min,19min,"security,credentials"
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,BUG,,src/api/CategoryController.java,487,Method has 12 parameters (threshold: 7),java:S1541,CONFIRMED,28min,28min,"security,credentials"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,BUG,INFO,src/model/Attribute.java,101,Thread.sleep() called with lock held,java:S2095,OPEN,34min,34min,"bug,null-pointer"
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,BUG,CRITICAL,src/enrichment/AiEnrichmentService.java,140,JWT token validated without expiry check,java:S2184,OPEN,55min,55min,"security,auth"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,VULNERABILITY,MAJOR,src/auth/UserService.java,286,SQL injection risk via string concatenation,java:S3776,OPEN,61min,61min,"security,injection"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,123,MINOR,src/catalog/ProductCatalogService.java,839,Method name ProcessData does not follow camelCase convention,java:S1135,OPEN,10min,10min,"bug,null-pointer"
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,VULNERABILITY,CRITICAL,src/util/DateUtils.java,812,Thread.sleep() called with lock held,java:S4508,OPEN,22min,22min,"security,injection"
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,VULNERABILITY,MAJOR,src/util/StringSanitizer.java,913,Unused private field should be removed,java:S1176,OPEN,28min,28min,"maintainability,deprecated"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,CODE_SMELL,,src/export/PdfExportService.java,768,Deprecated API usage: HttpClient constructor,java:S2885,OPEN,19min,19min,maintainability
+2025-06-30T08:30:00Z,  syngenta-pim-core  ,feature/bulk-import,BUG,MAJOR,src/api/ProductController.java,844,Deserialization of user-controlled data without validation,java:S3776,,20,TBD,"security,cryptography"
+2025-06-30T08:30:00Z,syngenta-pim-core,  feature/ai-enrichment  ,VULNERABILITY,MAJOR,src/config/SecurityConfig.java,774,Magic number 86400 should be extracted as a named constant,java:S1643,CONFIRMED,19min,19min,"security,credentials"
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,VULNERABILITY,CRITICAL,src/model/Category.java,923,Deprecated API usage: HttpClient constructor,java:S3655,CONFIRMED,,28min,"security,auth"
+2025-06-30T08:30:00Z,syngenta-pim-core,,CODE_SMELL,CRITICAL,src/api/ProductController.java,211,Null pointer dereference: method may return null,java:S3776,OPEN,43min,43min,"bug,multi-threading"
+2025-06-30T08:30:00Z,syngenta-pim-core,,CODE_SMELL,MINOR,src/util/DateUtils.java,969,Magic number 86400 should be extracted as a named constant,java:S2583,CONFIRMED,82min,82min,"security,owasp-a9"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,VULNERABILITY,CRITICAL,src/util/DateUtils.java,403,Weak hash algorithm MD5 used for product fingerprinting,java:S2068,CONFIRMED,43min,43min,security
+2025-06-30T08:30:00Z,syngenta-pim-core,main,BUG,INFO,src/api/ProductController.java,978,Method has 12 parameters (threshold: 7),java:S2259,OPEN,76min,76min,"maintainability,duplication"
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,VULNERABILITY,Error,src/api/CategoryController.java,431,Optional.get() called without isPresent() check,java:S107,CONFIRMED,88min,88min,"security,sql-injection"
+2025-06-30T08:30:00Z,syngenta-pim-core,main,BUG,,src/util/StringSanitizer.java,522,SQL injection risk via string concatenation,java:S1135,OPEN,76min,,"security,credentials"
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,BUG,CRITICAL,src/auth/UserService.java,819,XXE vulnerability: XML parser does not disable external entities,java:S3776,OPEN,76min,76min,"bug,spring"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,VULNERABILITY,Error,src/util/DateUtils.java,428,XXE vulnerability: XML parser does not disable external entities,java:S2972,OPEN,88min,88min,"bug,spring"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,code_smell,INFO,src/auth/UserService.java,863,Method has 12 parameters (threshold: 7),java:S1068,OPEN,70min,70min,"security,xxe"
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,VULNERABILITY,INFO,src/enrichment/AiEnrichmentService.java,707,Duplicated string literal appears 5 times,java:S2162,REOPENED,28min,28min,"security,credentials"
+N/A,syngenta-pim-core,feature/ai-enrichment,CODE_SMELL,MAJOR,src/enrichment/ImageProcessingService.java,658,Hardcoded password in configuration class,java:S2259,REOPENED,,49min,bug
+2025-06-30T08:30:00Z,syngenta-pim-core,,BUG,MAJOR,src/batch/ProductImportJob.java,-,Hardcoded password in configuration class,java:S2276,CONFIRMED,,22min,"security,deserialization"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,CODE_SMELL,INFO,src/enrichment/ImageProcessingService.java,253,JWT token validated without expiry check,java:S2162,CONFIRMED,82min,82min,"security,injection"
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,VULNERABILITY,MINOR,src/model/Category.java,419,SQL injection risk via string concatenation,java:S2162,OPEN,49min,49min,convention
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,CODE_SMELL,CRITICAL,src/config/DatabaseConfig.java,339,Deserialization of user-controlled data without validation,java:S107,CONFIRMED,,25min,"maintainability,duplication"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,CODE_SMELL,INFO,src/pricing/PricingCalculator.java,166,Cyclomatic complexity 28 exceeds threshold of 20,java:S4790,OPEN,55min,55min,"security,owasp-a9"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,CODE_SMELL,MAJOR,src/search/ElasticSearchService.java,212,Method has 12 parameters (threshold: 7),java:S107,REOPENED,31min,31min,"bug,multi-threading"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,VULNERABILITY,CRITICAL,src/export/CsvExportService.java,628,Unused private field should be removed,java:S107,CONFIRMED,70min,70min,
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,BUG,INFO,src/notification/EmailService.java,367,String concatenation in loop should use StringBuilder,java:S109,CONFIRMED,22min,22min,"bug,spring"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,BUG,MINOR,src/api/CategoryController.java,540,"Unused import
+with embedded newline",java:S2755,,49min,49min,"security,credentials"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,BUG,CRITICAL,src/api/AttributeController.java,740,Integer overflow risk in price calculation,java:S100,OPEN,19min,19min,"security,owasp-a9"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,VULNERABILITY,INFO,src/config/SecurityConfig.java,344,Incorrect equals() implementation breaks Set deduplication,java:S2229,CONFIRMED,10min,10min,maintainability
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,CODE_SMELL,MAJOR,src/catalog/CategoryService.java,74,JWT token validated without expiry check,java:S4508,REOPENED,25min,25min,convention
+2025-06-30T08:30:00Z,syngenta-pim-core,main,CODE_SMELL,CRITICAL,src/api/ProductController.java,941,Null pointer dereference: method may return null,java:S1874,CONFIRMED,67min,67min,"security,deserialization"
+2025-06-30T08:30:00Z,syngenta-pim-core,develop,CODE_SMELL,INFO,src/api/AttributeController.java,688,Method name ProcessData does not follow camelCase convention,java:S5659,CONFIRMED,52min,,security
+2025-06-30T08:30:00Z,syngenta-pim-core,main,BUG,LOW,src/catalog/ProductRepository.java,551,Missing Javadoc for public method,java:S2755,CONFIRMED,82min,82min,"security,xxe"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,BUG,INFO,src/config/DatabaseConfig.java,826,Deserialization of user-controlled data without validation,java:S3655,,10min,10min,performance
+2025-06-30T08:30:00Z,syngenta-pim-core,main,CODE_SMELL,INFO,src/util/DateUtils.java,507,Deserialization of user-controlled data without validation,java:S1643,OPEN,19min,19min,maintainability
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,VULNERABILITY,MINOR,src/util/StringSanitizer.java,114,Weak hash algorithm MD5 used for product fingerprinting,java:S2095,CONFIRMED,82min,82min,"bug,multi-threading"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,CODE_SMELL,CRITICAL,src/notification/EmailService.java,948,Deserialization of user-controlled data without validation,java:S1541,CONFIRMED,16min,,"bug,spring"
+2025-06-30T08:30:00Z,syngenta-pim-core,main,VULNERABILITY,CRITICAL,src/enrichment/ImageProcessingService.java,459,Vertical tabfound in message,  java:S2276  ,OPEN,70min,70min,"security,auth"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,VULNERABILITY,MAJOR,src/api/ProductController.java,960,SQL injection risk via string concatenation,java:S2583,REOPENED,37min,37min,"bug,resource-leak"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,BUG,INFO,src/enrichment/ImageProcessingService.java,400,XXE vulnerability: XML parser does not disable external entities,java:S2162,REOPENED,34min,34min,bug
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,CODE_SMELL,,src/model/Attribute.java,916,SQL injection risk via string concatenation,java:S1176,OPEN,43min,43min,"bug,multi-threading"
+2025-06-30T08:30:00Z,syngenta-pim-core,  main  ,Code_Smell,MINOR,src/config/SecurityConfig.java,156,Empty catch block suppresses exception,java:S1192,OPEN,82min,82min,"security,sql-injection"
+2025-06-30T08:30:00Z,Syngenta-PIM-Core,,BUG,CRITICAL,src/catalog/ProductRepository.java,903,Null pointer dereference: method may return null,java:S3649,CONFIRMED,40min,40min,
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/bulk-import,BUG,CRITICAL,src/api/AttributeController.java,631,Resource leak: InputStream never closed,java:S3776,REOPENED,13min,13min,"bug,multi-threading"
+27-01-2025,syngenta-pim-core,feature/bulk-import,BUG,CRITICAL,src/export/PdfExportService.java,unknown,"Unused import
+with embedded newline",java:S2184,,58min,58min,"maintainability,duplication"
+2025-06-30T08:30:00Z,syngenta-pim-core,feature/ai-enrichment,VULNERABILITY,INFO,src/api/AttributeController.java,804,Integer overflow risk in price calculation,java:S3655,CONFIRMED,79min,79min,"bug,concurrency"

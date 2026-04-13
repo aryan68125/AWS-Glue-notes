@@ -7180,53 +7180,6 @@ The correct production approach is to separate schema evolution handling into ex
 ![DataProcessingDLQ_1](images/production_grade_implementation_version_7/sqs/DataProcessingDLQ_1.png)
 ![DataProcessingDLQ_2](images/production_grade_implementation_version_7/sqs/DataProcessingDLQ_2.png)
 - Here is the access policy code : 
-    - OLD VERSION (Working)
-    - ```json
-        {
-            "Version": "2012-10-17",
-            "Id": "__default_policy_ID",
-            "Statement": [
-                {
-                "Sid": "__owner_statement",
-                "Effect": "Allow",
-                "Principal": {
-                    "AWS": "arn:aws:iam::746244690650:root"
-                },
-                "Action": "SQS:*",
-                "Resource": "arn:aws:sqs:ap-south-1:746244690650:DataProcessingDLQ.fifo"
-                },
-                {
-                "Sid": "AllowEventBridgeToSendMessage",
-                "Effect": "Allow",
-                "Principal": {
-                    "Service": "events.amazonaws.com"
-                },
-                "Action": "sqs:SendMessage",
-                "Resource": "arn:aws:sqs:ap-south-1:746244690650:DataProcessingDLQ.fifo",
-                "Condition": {
-                    "ArnEquals": {
-                    "aws:SourceArn": "arn:aws:events:ap-south-1:746244690650:rule/sonar_qube_event_rules"
-                    }
-                }
-                },
-                {
-                "Sid": "AWSEvents_ActivateLambdaFuncEventBridgeRules_dlq_41c9320f-edd2-4fde-ad71-2985e68b1d7c",
-                "Effect": "Allow",
-                "Principal": {
-                    "Service": "events.amazonaws.com"
-                },
-                "Action": "sqs:SendMessage",
-                "Resource": "arn:aws:sqs:ap-south-1:746244690650:DataProcessingDLQ.fifo",
-                "Condition": {
-                    "ArnEquals": {
-                    "aws:SourceArn": "arn:aws:events:ap-south-1:746244690650:rule/sonar_qube_event_rules"
-                    }
-                }
-                }
-            ]
-        }
-      ```
-    - NEW VERSION (TESTING PENDING)
     - ```json
         {
             "Version": "2012-10-17",
@@ -7257,8 +7210,698 @@ The correct production approach is to separate schema evolution handling into ex
 ![DataProcessingDLQ_4](images/production_grade_implementation_version_7/sqs/DataProcessingDLQ_4.png)
 
 ### Setting up and implementing Lambda functions
-### TriggerProcessSonarQubeLogStepFunction
+#### TriggerProcessSonarQubeLogStepFunction
+- ```TriggerProcessSonarQubeLogStepFunction``` is the name of this lamdba function
 - The reason I had to use lambda function in my architecture is because SQS does not have the capability of directly triggering the step function. 
+- So here I am going to use Lambda function to ultimately trigger my step function called ```process_sonar_qube_step_function``` which will orchestrate AWS glue job 
+- ![create_lambda_function_1](images/production_grade_implementation_version_7/LambdaFunction/create_lambda_function_1.png)
+- ![create_lambda_function_2](images/production_grade_implementation_version_7/LambdaFunction/create_lambda_function_2.png)
+![create_lambda_function_3](images/production_grade_implementation_version_7/LambdaFunction/create_lambda_function_3.png)
+- Lambda function Python code : 
+    - ```python
+        import json
+        import boto3
+        import uuid
+        import time
+        import os
+        from datetime import datetime, timezone, timedelta
+
+        sf       = boto3.client("stepfunctions")
+        dynamodb = boto3.client("dynamodb")
+        glue     = boto3.client("glue")
+
+        STATE_MACHINE_ARN                        = os.environ["STATE_MACHINE_ARN_ENV"]
+        LAMBDA_DYNAMO_TABLE                      = os.environ["DYNAMO_DB_TABLE_NAME"]
+        DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME = os.environ["DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME"]
+        AWS_GLUE_JOB_NAME                        = os.environ["AWS_GLUE_JOB_NAME"]
+        GLUE_SINK_BUCKET                         = os.environ["SINK_BUCKET_NAME"]
+        GLUE_CATALOG_DATABASE                    = os.environ["GLUE_CATALOG_DATABASE"]
+        GLUE_CATALOG_TABLE_NAME                  = os.environ["GLUE_CATALOG_TABLE_NAME"]
+        GLUE_DYNAMO_TABLE                        = os.environ["DYNAMO_DB_TABLE_NAME"]
+
+
+        def sync_glue_concurrency():
+            response        = glue.get_job(JobName=AWS_GLUE_JOB_NAME)
+            max_concurrency = response["Job"].get("ExecutionProperty", {}).get("MaxConcurrentRuns", 1)
+
+            try:
+                dynamodb.put_item(
+                    TableName=DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME,
+                    Item={
+                        "semaphore_key":      {"S": "GLUE_SEMAPHORE"},
+                        "current_count":      {"N": "0"},
+                        "max_glue_concurrency": {"N": str(max_concurrency)}
+                    },
+                    ConditionExpression="attribute_not_exists(semaphore_key)"
+                )
+                print("Semaphore created")
+                return
+
+            except dynamodb.exceptions.ConditionalCheckFailedException:
+                pass
+
+            try:
+                dynamodb.update_item(
+                    TableName=DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME,
+                    Key={"semaphore_key": {"S": "GLUE_SEMAPHORE"}},
+                    UpdateExpression="SET max_glue_concurrency = :new",
+                    ConditionExpression="max_glue_concurrency <> :new",
+                    ExpressionAttributeValues={":new": {"N": str(max_concurrency)}}
+                )
+            except dynamodb.exceptions.ConditionalCheckFailedException:
+                pass
+
+
+        def acquire_glue_slot():
+            """
+            Atomically acquire one Glue concurrency slot.
+            Returns True if slot acquired, False if Glue is at capacity.
+            This is the critical fix: the lock is acquired HERE in Lambda,
+            not inside the Step Function after it has already started.
+            """
+            try:
+                dynamodb.update_item(
+                    TableName=DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME,
+                    Key={"semaphore_key": {"S": "GLUE_SEMAPHORE"}},
+                    UpdateExpression="SET current_count = current_count + :inc",
+                    ConditionExpression="current_count < max_glue_concurrency",
+                    ExpressionAttributeValues={":inc": {"N": "1"}}
+                )
+                print("Glue slot acquired")
+                return True
+
+            except dynamodb.exceptions.ConditionalCheckFailedException:
+                print("Glue at capacity — returning message to SQS")
+                return False
+
+
+        def lambda_handler(event, context):
+
+            sync_glue_concurrency()
+
+            IST       = timezone(timedelta(hours=5, minutes=30))
+            timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S %Z")
+            ttl_value = int(time.time()) + (30 * 24 * 60 * 60)
+
+            # Report batch item failures so only the unprocessed message
+            # returns to SQS — not the entire batch.
+            batch_item_failures = []
+
+            for record in event["Records"]:
+                body     = json.loads(record["body"])
+                bucket   = body["detail"]["bucket"]["name"]
+                key      = body["detail"]["object"]["key"]
+                file_key = f"s3://{bucket}/{key}"
+
+                # ── Idempotency check ──────────────────────────────────────
+                existing = dynamodb.get_item(
+                    TableName=LAMBDA_DYNAMO_TABLE,
+                    Key={"file_key": {"S": file_key}}
+                )
+                item = existing.get("Item")
+
+                if item:
+                    status = item.get("status", {}).get("S", "")
+                    if status == "SUCCESS":
+                        print(f"Already succeeded — skipping: {file_key}")
+                        continue
+                    if status == "IN_PROGRESS":
+                        print(f"Already in progress — skipping: {file_key}")
+                        continue
+                    print(f"Retrying failed file: {file_key}")
+
+                # ── Acquire Glue slot BEFORE starting the Step Function ────
+                # If Glue is full, return this specific message to SQS.
+                # SQS will retry it after the visibility timeout — no thundering
+                # herd because SQS staggers retries independently per message.
+                if not acquire_glue_slot():
+                    batch_item_failures.append({"itemIdentifier": record["messageId"]})
+                    continue
+
+                # ── Write idempotency record ───────────────────────────────
+                try:
+                    dynamodb.put_item(
+                        TableName=LAMBDA_DYNAMO_TABLE,
+                        Item={
+                            "file_key":    {"S": file_key},
+                            "status":      {"S": "IN_PROGRESS"},
+                            "retry_count": {"N": "0"},
+                            "created_at":  {"S": timestamp},
+                            "ttl":         {"N": str(ttl_value)}
+                        },
+                        ConditionExpression="attribute_not_exists(file_key) OR #s = :failed",
+                        ExpressionAttributeNames={"#s": "status"},
+                        ExpressionAttributeValues={":failed": {"S": "FAILED"}}
+                    )
+                except dynamodb.exceptions.ConditionalCheckFailedException:
+                    # Race condition — another Lambda already claimed this file.
+                    # Release the slot we just acquired since we won't use it.
+                    dynamodb.update_item(
+                        TableName=DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME,
+                        Key={"semaphore_key": {"S": "GLUE_SEMAPHORE"}},
+                        UpdateExpression="SET current_count = current_count - :dec",
+                        ConditionExpression="current_count > :zero",
+                        ExpressionAttributeValues={
+                            ":dec": {"N": "1"},
+                            ":zero": {"N": "0"}
+                        }
+                    )
+                    print(f"Race condition — slot released, skipping: {file_key}")
+                    continue
+
+                # ── Start Step Function — it already holds the slot ────────
+                sf.start_execution(
+                    stateMachineArn=STATE_MACHINE_ARN,
+                    input=json.dumps({
+                        "files": [{
+                            "bucket":   bucket,
+                            "key":      key,
+                            "file_key": file_key,
+                            "glue_args": {
+                                "--SINK_BUCKET_NAME":        GLUE_SINK_BUCKET,
+                                "--GLUE_CATALOG_DATABASE":   GLUE_CATALOG_DATABASE,
+                                "--GLUE_CATALOG_TABLE_NAME": GLUE_CATALOG_TABLE_NAME,
+                                "--DYNAMO_DB_TABLE_NAME":    GLUE_DYNAMO_TABLE,
+                                "--DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME":
+                                    DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME,
+                            }
+                        }]
+                    })
+                )
+                print(f"Step Function started for: {file_key}")
+
+            return {"batchItemFailures": batch_item_failures}
+      ```
+- Set the trigger in this lambda function with this configuration as below
+- When I set this trigger in my lamdba function, this allows my sqs queue to invoke lamdba function the moment it recieves the event message from the event bridge 
+- ![create_lambda_function_4](images/production_grade_implementation_version_7/LambdaFunction/create_lambda_function_4.png)
+- IAM role configuration for this lambda function 
+- ![create_lambda_function_5](images/production_grade_implementation_version_7/LambdaFunction/create_lambda_function_5.png)
+    - The name of the IAM role for this lamdba function ```TriggerProcessSonarQubeLogStepFunctionRole```
+    - Policies attached to this role : 
+        - ```AllowLambdaFunctionToGetGlueJobName``` : 
+            - This policy allows this lambda function to get the AWS glue job name using boto3 dynamically
+            ```json
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "Statement1",
+                        "Effect": "Allow",
+                        "Action": "glue:GetJob",
+                        "Resource": "arn:aws:glue:ap-south-1:746244690650:job/process_sonar_qube_logs_ETL"
+                    }
+                ]
+            }
+            ```
+        - ```AllowLambdaToAccessSQSAndStepFunction``` : 
+            - This policy allows this lambda function to access ```DataProcessingJobQueue.fifo``` and ```DataProcessingDLQ.fifo``` sqs queues with the ability to ability to delete and recieve messages 
+            - This also gives this lambda function to write logs in cloud watch
+            ```json
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": [
+                            "states:StartExecution"
+                        ],
+                        "Resource": "arn:aws:states:ap-south-1:746244690650:stateMachine:process_sonar_qube_step_function"
+                    },
+                    {
+                        "Effect": "Allow",
+                        "Action": [
+                            "sqs:ReceiveMessage",
+                            "sqs:DeleteMessage",
+                            "sqs:GetQueueAttributes"
+                        ],
+                        "Resource": [
+                            "arn:aws:sqs:ap-south-1:746244690650:DataProcessingJobQueue.fifo",
+                            "arn:aws:sqs:ap-south-1:746244690650:DataProcessingDLQ.fifo"
+                        ]
+                    },
+                    {
+                        "Effect": "Allow",
+                        "Action": [
+                            "logs:CreateLogGroup",
+                            "logs:CreateLogStream",
+                            "logs:PutLogEvents"
+                        ],
+                        "Resource": "*"
+                    }
+                ]
+            }
+            ```
+        - ```DynamoDbAccessPolicyForLambdaFunction``` : 
+            - This policy allows this lambda function to talk to dynamoDB. Where this lambda function can create, update and get items from ```sonar_qube_logs_processing_registery``` and ```glue_semaphore``` tables in dynamoDB
+            ```json
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "DynamoDbAccessPolicyForLambdaFunction",
+                        "Effect": "Allow",
+                        "Action": [
+                            "dynamodb:PutItem",
+                            "dynamodb:GetItem",
+                            "dynamodb:UpdateItem"
+                        ],
+                        "Resource": [
+                            "arn:aws:dynamodb:ap-south-1:746244690650:table/sonar_qube_logs_processing_registery",
+                            "arn:aws:dynamodb:ap-south-1:746244690650:table/glue_semaphore"
+                        ]
+                    }
+                ]
+            }
+            ```
+- Set environment variables for this lambda function 
+- ![create_lambda_function_6](images/production_grade_implementation_version_7/LambdaFunction/create_lambda_function_6.png)
+
+#### ProcessDLQMessagesOnDemandLamdbaFunction
+- This lambda function is responsible for handling DLQ mechanism in this pipeline 
+- Since the lambda function creation process is the same I am not including any screen shot for the same here.
+- Here is the python code : 
+    - ```python
+        import json
+        import boto3
+        import time
+        import os
+        from datetime import datetime, timezone, timedelta
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # Environment variables — same names and pattern as TriggerProcessSonarQubeLogStepFunction.
+        # Two additions: DLQ_URL and MAX_MESSAGES_PER_RUN.
+        # ─────────────────────────────────────────────────────────────────────────────
+        sf       = boto3.client("stepfunctions")
+        dynamodb = boto3.client("dynamodb")
+        glue     = boto3.client("glue")
+        sqs      = boto3.client("sqs")
+
+        STATE_MACHINE_ARN                        = os.environ["STATE_MACHINE_ARN_ENV"]
+        LAMBDA_DYNAMO_TABLE                      = os.environ["DYNAMO_DB_TABLE_NAME"]
+        DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME = os.environ["DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME"]
+        AWS_GLUE_JOB_NAME                        = os.environ["AWS_GLUE_JOB_NAME"]
+        GLUE_SINK_BUCKET                         = os.environ["SINK_BUCKET_NAME"]
+        GLUE_CATALOG_DATABASE                    = os.environ["GLUE_CATALOG_DATABASE"]
+        GLUE_CATALOG_TABLE_NAME                  = os.environ["GLUE_CATALOG_TABLE_NAME"]
+        GLUE_DYNAMO_TABLE                        = os.environ["DYNAMO_DB_TABLE_NAME"]   # same alias pattern as original Lambda
+        DLQ_URL                                  = os.environ["DLQ_URL"]
+        MAX_MESSAGES_PER_RUN                     = int(os.environ.get("MAX_MESSAGES_PER_RUN"))
+
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # sync_glue_concurrency — identical to TriggerProcessSonarQubeLogStepFunction.
+        # Both Lambdas must enforce the same semaphore or the guard is meaningless.
+        # ─────────────────────────────────────────────────────────────────────────────
+        def sync_glue_concurrency():
+            response        = glue.get_job(JobName=AWS_GLUE_JOB_NAME)
+            max_concurrency = response["Job"].get("ExecutionProperty", {}).get("MaxConcurrentRuns", 1)
+
+            try:
+                dynamodb.put_item(
+                    TableName=DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME,
+                    Item={
+                        "semaphore_key":        {"S": "GLUE_SEMAPHORE"},
+                        "current_count":        {"N": "0"},
+                        "max_glue_concurrency": {"N": str(max_concurrency)}
+                    },
+                    ConditionExpression="attribute_not_exists(semaphore_key)"
+                )
+                print("Semaphore created")
+                return
+            except dynamodb.exceptions.ConditionalCheckFailedException:
+                pass
+
+            try:
+                dynamodb.update_item(
+                    TableName=DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME,
+                    Key={"semaphore_key": {"S": "GLUE_SEMAPHORE"}},
+                    UpdateExpression="SET max_glue_concurrency = :new",
+                    ConditionExpression="max_glue_concurrency <> :new",
+                    ExpressionAttributeValues={":new": {"N": str(max_concurrency)}}
+                )
+            except dynamodb.exceptions.ConditionalCheckFailedException:
+                pass
+
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # acquire_glue_slot — identical to TriggerProcessSonarQubeLogStepFunction.
+        # Returns True if slot acquired, False if Glue is at capacity.
+        # ─────────────────────────────────────────────────────────────────────────────
+        def acquire_glue_slot():
+            try:
+                dynamodb.update_item(
+                    TableName=DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME,
+                    Key={"semaphore_key": {"S": "GLUE_SEMAPHORE"}},
+                    UpdateExpression="SET current_count = current_count + :inc",
+                    ConditionExpression="current_count < max_glue_concurrency",
+                    ExpressionAttributeValues={":inc": {"N": "1"}}
+                )
+                print("Glue slot acquired")
+                return True
+            except dynamodb.exceptions.ConditionalCheckFailedException:
+                print("Glue at capacity — leaving message in DLQ")
+                return False
+
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # release_glue_slot — extra helper needed only in replay context.
+        # The original Lambda returns the message to SQS on capacity failure so it
+        # never holds a slot it won't use.  Here, if start_execution throws AFTER
+        # acquire_glue_slot() succeeded, we must release the slot manually.
+        # ─────────────────────────────────────────────────────────────────────────────
+        def release_glue_slot():
+            try:
+                dynamodb.update_item(
+                    TableName=DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME,
+                    Key={"semaphore_key": {"S": "GLUE_SEMAPHORE"}},
+                    UpdateExpression="SET current_count = current_count - :dec",
+                    ConditionExpression="current_count > :zero",
+                    ExpressionAttributeValues={
+                        ":dec":  {"N": "1"},
+                        ":zero": {"N": "0"}
+                    }
+                )
+            except dynamodb.exceptions.ConditionalCheckFailedException:
+                pass  # Already at 0 — safe to ignore
+
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # parse_dlq_message
+        #
+        # DLQ messages written by the FIXED SendToDLQ state contain States.JsonToString($),
+        # which is the full Step Function state at that point.  That state includes:
+        #   { "bucket": "...", "key": "...", "file_key": "...", "glue_args": {...}, ... }
+        #
+        # Messages written by the OLD SendToDLQ (States.JsonToString($.error)) only
+        # have { "Error": "...", "Cause": "..." } and cannot be replayed automatically.
+        # ─────────────────────────────────────────────────────────────────────────────
+        def parse_dlq_message(body_str: str):
+            try:
+                body = json.loads(body_str)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"DLQ message is not valid JSON: {e}")
+
+            # Detect old-format messages — error-only, no file coordinates
+            if set(body.keys()) <= {"Error", "Cause"}:
+                raise ValueError(
+                    "Message is in old format (error-only, pre-dates SendToDLQ fix). "
+                    "Cannot replay automatically — resolve via DynamoDB FAILED records."
+                )
+
+            bucket   = body.get("bucket")
+            key      = body.get("key")
+            file_key = body.get("file_key")
+
+            if not all([bucket, key, file_key]):
+                raise ValueError(
+                    f"Message is missing required fields (bucket/key/file_key). "
+                    f"Keys present: {list(body.keys())}"
+                )
+
+            return bucket, key, file_key
+
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # lambda_handler
+        #
+        # Triggered MANUALLY ONLY — no SQS trigger on this function.
+        # Invoke via Lambda console Test button (payload: {}) or AWS CLI.
+        #
+        # Polls DataProcessingDLQ.fifo up to MAX_MESSAGES_PER_RUN times.
+        # For each message the flow mirrors TriggerProcessSonarQubeLogStepFunction:
+        #   idempotency check → acquire slot → write IN_PROGRESS → start Step Function
+        #
+        # Key difference from the main Lambda:
+        #   - Reads from DLQ via sqs.receive_message() instead of event["Records"]
+        #   - Deletes message from DLQ only AFTER Step Function starts successfully
+        #   - Messages left un-deleted become visible again after VisibilityTimeout
+        # ─────────────────────────────────────────────────────────────────────────────
+        def lambda_handler(event, context):
+
+            sync_glue_concurrency()
+
+            IST       = timezone(timedelta(hours=5, minutes=30))
+            timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S %Z")
+            ttl_value = int(time.time()) + (30 * 24 * 60 * 60)
+
+            processed   = 0  # handed to Step Function
+            skipped     = 0  # idempotency skips
+            at_capacity = 0  # Glue full — left in DLQ for next run
+            errored     = 0  # unrecoverable message — deleted from DLQ
+
+            messages_to_attempt = MAX_MESSAGES_PER_RUN
+            print(f"DLQ Replay | Starting — will attempt up to {messages_to_attempt} messages")
+
+            while messages_to_attempt > 0:
+
+                # SQS max is 10 messages per receive call
+                batch_size = min(messages_to_attempt, 10)
+
+                response = sqs.receive_message(
+                    QueueUrl=DLQ_URL,
+                    MaxNumberOfMessages=batch_size,
+                    VisibilityTimeout=300,   # 5 min — enough time to start Step Function and delete
+                    WaitTimeSeconds=0        # short poll — on-demand context, don't hang
+                )
+
+                messages = response.get("Messages", [])
+
+                if not messages:
+                    print("DLQ Replay | No more messages in DLQ — stopping")
+                    break
+
+                for msg in messages:
+                    receipt_handle = msg["ReceiptHandle"]
+                    body_str       = msg["Body"]
+
+                    # ── Parse DLQ message ──────────────────────────────────
+                    try:
+                        bucket, key, file_key = parse_dlq_message(body_str)
+                    except ValueError as e:
+                        # Unrecoverable — delete to unblock the queue and log clearly
+                        print(f"DLQ Replay | UNRECOVERABLE — deleting. Reason: {e}")
+                        sqs.delete_message(QueueUrl=DLQ_URL, ReceiptHandle=receipt_handle)
+                        errored += 1
+                        messages_to_attempt -= 1
+                        continue
+
+                    print(f"DLQ Replay | Processing: {file_key}")
+
+                    # ── Idempotency check — same logic as main Lambda ──────
+                    existing = dynamodb.get_item(
+                        TableName=LAMBDA_DYNAMO_TABLE,
+                        Key={"file_key": {"S": file_key}}
+                    )
+                    item = existing.get("Item")
+
+                    if item:
+                        status = item.get("status", {}).get("S", "")
+                        if status == "SUCCESS":
+                            # File already succeeded — stale DLQ message, clean it up
+                            print(f"Already succeeded — deleting from DLQ: {file_key}")
+                            sqs.delete_message(QueueUrl=DLQ_URL, ReceiptHandle=receipt_handle)
+                            skipped += 1
+                            messages_to_attempt -= 1
+                            continue
+                        if status == "IN_PROGRESS":
+                            # Step Function is already running — leave in DLQ, don't double-fire
+                            print(f"Already in progress — skipping: {file_key}")
+                            skipped += 1
+                            messages_to_attempt -= 1
+                            continue
+                        print(f"Retrying failed file: {file_key}")
+
+                    # ── Acquire Glue slot — same logic as main Lambda ──────
+                    if not acquire_glue_slot():
+                        # Glue full — do NOT delete the DLQ message.
+                        # Visibility timeout will expire and message becomes available
+                        # for the next manual trigger run.
+                        at_capacity += 1
+                        messages_to_attempt -= 1
+                        print(f"DLQ Replay | Glue full — {file_key} left in DLQ for next run")
+                        continue
+
+                    # ── Write idempotency record — same logic as main Lambda
+                    try:
+                        dynamodb.put_item(
+                            TableName=LAMBDA_DYNAMO_TABLE,
+                            Item={
+                                "file_key":    {"S": file_key},
+                                "status":      {"S": "IN_PROGRESS"},
+                                "retry_count": {"N": "0"},
+                                "created_at":  {"S": timestamp},
+                                "ttl":         {"N": str(ttl_value)}
+                            },
+                            ConditionExpression="attribute_not_exists(file_key) OR #s = :failed",
+                            ExpressionAttributeNames={"#s": "status"},
+                            ExpressionAttributeValues={":failed": {"S": "FAILED"}}
+                        )
+                    except dynamodb.exceptions.ConditionalCheckFailedException:
+                        # Race condition — another process claimed this file.
+                        # Release slot we just acquired since we won't use it.
+                        dynamodb.update_item(
+                            TableName=DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME,
+                            Key={"semaphore_key": {"S": "GLUE_SEMAPHORE"}},
+                            UpdateExpression="SET current_count = current_count - :dec",
+                            ConditionExpression="current_count > :zero",
+                            ExpressionAttributeValues={
+                                ":dec":  {"N": "1"},
+                                ":zero": {"N": "0"}
+                            }
+                        )
+                        print(f"Race condition — slot released, skipping: {file_key}")
+                        skipped += 1
+                        messages_to_attempt -= 1
+                        continue
+
+                    # ── Start Step Function — same input shape as main Lambda
+                    try:
+                        sf.start_execution(
+                            stateMachineArn=STATE_MACHINE_ARN,
+                            input=json.dumps({
+                                "files": [{
+                                    "bucket":   bucket,
+                                    "key":      key,
+                                    "file_key": file_key,
+                                    "glue_args": {
+                                        "--SINK_BUCKET_NAME":        GLUE_SINK_BUCKET,
+                                        "--GLUE_CATALOG_DATABASE":   GLUE_CATALOG_DATABASE,
+                                        "--GLUE_CATALOG_TABLE_NAME": GLUE_CATALOG_TABLE_NAME,
+                                        "--DYNAMO_DB_TABLE_NAME":    GLUE_DYNAMO_TABLE,
+                                        "--DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME":
+                                            DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME,
+                                    }
+                                }]
+                            })
+                        )
+                        print(f"Step Function started for: {file_key}")
+                    except Exception as e:
+                        # start_execution failed — release the slot we acquired
+                        # and reset DynamoDB to FAILED so it stays retryable.
+                        release_glue_slot()
+                        dynamodb.update_item(
+                            TableName=LAMBDA_DYNAMO_TABLE,
+                            Key={"file_key": {"S": file_key}},
+                            UpdateExpression="SET #s = :failed",
+                            ExpressionAttributeNames={"#s": "status"},
+                            ExpressionAttributeValues={":failed": {"S": "FAILED"}}
+                        )
+                        print(f"Step Function failed to start: {e} — message left in DLQ")
+                        errored += 1
+                        messages_to_attempt -= 1
+                        continue
+
+                    # ── Delete from DLQ only AFTER Step Function starts ────
+                    # If we deleted before and start_execution threw, the message
+                    # would be lost permanently with no way to replay.
+                    sqs.delete_message(QueueUrl=DLQ_URL, ReceiptHandle=receipt_handle)
+                    print(f"Deleted from DLQ: {file_key}")
+
+                    processed += 1
+                    messages_to_attempt -= 1
+
+            print(
+                f"DLQ Replay | Complete — "
+                f"processed={processed}, skipped={skipped}, "
+                f"left_in_DLQ_glue_full={at_capacity}, unrecoverable_deleted={errored}"
+            )
+
+            return {
+                "statusCode": 200,
+                "body": {
+                    "processed":                    processed,
+                    "skipped_already_done":         skipped,
+                    "left_in_dlq_glue_at_capacity": at_capacity,
+                    "unrecoverable_deleted":        errored,
+                }
+            }
+      ```
+- Set Env variables in this lambda function : 
+![create_lambda_function_8](images/production_grade_implementation_version_7/LambdaFunction/create_lambda_function_8.png)
+- Set IAM role for this lambda function : 
+- ![create_lambda_function_9](images/production_grade_implementation_version_7/LambdaFunction/create_lambda_function_9.png)
+    - The name of the IAM role that I set to this lambda function is named ```ProcessDLQMessagesOnDemandLamdbaFunction-role-hpkfxej8```
+    - Policies attached to this Role : 
+        - ```AllowDLQLamdbaFunctionToGetAWSGlueJobName``` : 
+            - This policy allows this lambda function to get aws glue job name dynamically using boto3 library
+            - ```json
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "Statement1",
+                            "Effect": "Allow",
+                            "Action": "glue:GetJob",
+                            "Resource": "arn:aws:glue:ap-south-1:746244690650:job/process_sonar_qube_logs_ETL"
+                        }
+                    ]
+                }
+              ```
+        - ```AllowLambdaToAccessSQSAndStepFunction``` : 
+            - This policy allows this lambda function to invoke the step function named ```process_sonar_qube_step_function```
+            - This policy allows this lambda function to read, delete and get event messages from ```DataProcessingJobQueue.fifo``` and ```DataProcessingDLQ.fifo``` sqs queues 
+            - This policy also allows this lambda function to create logs in cloud watch 
+            - ```json
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "states:StartExecution"
+                            ],
+                            "Resource": "arn:aws:states:ap-south-1:746244690650:stateMachine:process_sonar_qube_step_function"
+                        },
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "sqs:ReceiveMessage",
+                                "sqs:DeleteMessage",
+                                "sqs:GetQueueAttributes"
+                            ],
+                            "Resource": [
+                                "arn:aws:sqs:ap-south-1:746244690650:DataProcessingJobQueue.fifo",
+                                "arn:aws:sqs:ap-south-1:746244690650:DataProcessingDLQ.fifo"
+                            ]
+                        },
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "logs:CreateLogGroup",
+                                "logs:CreateLogStream",
+                                "logs:PutLogEvents"
+                            ],
+                            "Resource": "*"
+                        }
+                    ]
+                }
+              ```
+        - ```DynamoDbAccessPolicyForLambdaFunction``` : 
+            - This allows lambda functions to get, create or update items in tables named ```glue_semaphore``` and ```sonar_qube_logs_processing_registery``` in dynamoDB
+            - ```json
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "DynamoDbAccessPolicyForLambdaFunction",
+                            "Effect": "Allow",
+                            "Action": [
+                                "dynamodb:PutItem",
+                                "dynamodb:GetItem",
+                                "dynamodb:UpdateItem"
+                            ],
+                            "Resource": [
+                                "arn:aws:dynamodb:ap-south-1:746244690650:table/sonar_qube_logs_processing_registery",
+                                "arn:aws:dynamodb:ap-south-1:746244690650:table/glue_semaphore"
+                            ]
+                        }
+                    ]
+                }
+              ```
+- In this lambda function I will not set any trigger because I don't want SQS DLQ queue named ```DataProcessingDLQ.fifo``` to automatically trigger my lambda function I want to trigger the DLQ mechanism manually using the test button
+- In order to run this lambda function using the test button make sure to remove the default key value pairs from the input in the lambda function as shown in this screenshot. 
+![create_lambda_function_7](images/production_grade_implementation_version_7/LambdaFunction/create_lambda_function_7.png)
 
 
 

@@ -7075,7 +7075,43 @@ The correct production approach is to separate schema evolution handling into ex
 ![activate_S3_eventBridge_notification](images/production_grade_implementation_version_7/S3_source/activate_S3_eventBridge_notification.png)
 ![activate_S3_eventBridge_notification_2](images/production_grade_implementation_version_7/S3_source/activate_S3_eventBridge_notification_2.png)
 ![activate_S3_eventBridge_notification_3](images/production_grade_implementation_version_7/S3_source/activate_S3_eventBridge_notification_3.png)
-- Now my source s3 bucket will be able to send event messages to event bridge 
+- What Happens When You Turn This On?
+    - The Fundamental Shift in Event Routing
+        - When this toggle is Off, S3 event notifications work like this:
+            ```bash
+            S3 (file arrives) → directly → Lambda / SQS / SNS
+                                (tight coupling)
+            ```
+        - When this toggle is On, S3 event notifications work like this:
+            ```bash
+            S3 (file arrives) → EventBridge Event Bus → Rules → Targets
+                                            (loose coupling)
+            ```
+            - S3 stops holding the routing logic. It just broadcasts every event to EventBridge's default event bus, and EventBridge decides what to do with it based on rules I define.
+    - What S3 Actually Sends to EventBridge?
+        - Every time an object is created, deleted, or modified in your bucket, S3 publishes a structured JSON event to the default EventBridge event bus. For my pipeline, the most important one is the Object Created event, which looks like this:
+        ```bash
+        {
+        "version": "0",
+        "id": "unique-event-id",
+        "source": "aws.s3",
+        "detail-type": "Object Created",
+        "account": "406868976171",
+        "region": "ap-south-1",
+        "detail": {
+            "bucket": {
+            "name": "deployement-logs-data-source"
+            },
+            "object": {
+            "key": "raw_data/sonar_qube_logs/sonarqube_issues_part1.json",
+            "size": 102400,
+            "etag": "abc123..."
+            },
+            "reason": "PutObject"
+        }
+        }
+        ```
+        - This is why in my Lambda function and Step Function you can extract ```$.detail.bucket.name``` and ```$.detail.object.key``` those fields come directly from this payload.
 
 ### Setting up event bridge
 ![event_bridge_1](images/production_grade_implementation_version_7/EventBridge/event_bridge_1.png)
@@ -7117,7 +7153,7 @@ The correct production approach is to separate schema evolution handling into ex
 ![DataProcessingJobQueue_2](images/production_grade_implementation_version_7/sqs/DataProcessingJobQueue_2.png)
 - Here is the access policy code : 
     - ```json
-      {
+        {
         "Version": "2012-10-17",
         "Statement": [
             {
@@ -7135,7 +7171,7 @@ The correct production approach is to separate schema evolution handling into ex
             }
             }
         ]
-      }
+        }
       ```
 ![DataProcessingJobQueue_3](images/production_grade_implementation_version_7/sqs/DataProcessingJobQueue_3.png)
 ![DataProcessingJobQueue_4](images/production_grade_implementation_version_7/sqs/DataProcessingJobQueue_4.png)
@@ -7144,6 +7180,7 @@ The correct production approach is to separate schema evolution handling into ex
 ![DataProcessingDLQ_1](images/production_grade_implementation_version_7/sqs/DataProcessingDLQ_1.png)
 ![DataProcessingDLQ_2](images/production_grade_implementation_version_7/sqs/DataProcessingDLQ_2.png)
 - Here is the access policy code : 
+    - OLD VERSION (Working)
     - ```json
         {
             "Version": "2012-10-17",
@@ -7189,9 +7226,39 @@ The correct production approach is to separate schema evolution handling into ex
             ]
         }
       ```
+    - NEW VERSION (TESTING PENDING)
+    - ```json
+        {
+            "Version": "2012-10-17",
+            "Id": "__default_policy_ID",
+            "Statement": [
+                {
+                "Sid": "__owner_statement",
+                "Effect": "Allow",
+                "Principal": {
+                    "AWS": "arn:aws:iam::746244690650:root"
+                },
+                "Action": "SQS:*",
+                "Resource": "arn:aws:sqs:ap-south-1:746244690650:DataProcessingDLQ.fifo"
+                },
+                {
+                "Sid": "AllowStepFunctionToSendMessageToDLQ",
+                "Effect": "Allow",
+                "Principal": {
+                    "AWS": "arn:aws:iam::746244690650:role/service-role/StepFunctions-process_sonar_qube_step_function-role-luacf37bc"
+                },
+                "Action": "sqs:SendMessage",
+                "Resource": "arn:aws:sqs:ap-south-1:746244690650:DataProcessingDLQ.fifo"
+                }
+            ]
+        }
+      ```
 ![DataProcessingDLQ_3](images/production_grade_implementation_version_7/sqs/DataProcessingDLQ_3.png)
 ![DataProcessingDLQ_4](images/production_grade_implementation_version_7/sqs/DataProcessingDLQ_4.png)
 
+### Setting up and implementing Lambda functions
+### TriggerProcessSonarQubeLogStepFunction
+- The reason I had to use lambda function in my architecture is because SQS does not have the capability of directly triggering the step function. 
 
 
 

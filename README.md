@@ -6106,7 +6106,7 @@ dynamodb.put_item(
         - Storing dlq_event_message in DynamoDB solves this by making DynamoDB the source of truth for recovery, not SQS. The DLQ message is now treated as a convenience mechanism for triggering automated replay — not as the only place the recovery payload exists. If the DLQ message is lost for any reason, the data engineer can look up the FAILED record in DynamoDB, read the dlq_event_message field, and either paste it directly into SQS to re-add the message or use it to trigger a manual re-ingestion. The exact payload — bucket, key, and file_key — is preserved in the DynamoDB record for as long as the TTL keeps the record alive.
         - This also makes DynamoDB a complete audit log. For every failed file, a single DynamoDB item contains the full lifecycle — when the file arrived, what error caused the failure, what the recovery payload was, how many times it was retried, and when it finally succeeded or was abandoned. Nothing else needs to be checked.
 
-**replay_failed_ingestion state function :**
+**replay_failed_ingestion step function :**
 - IAM role and policies configurations :
     - ![replay_failed_ingestion](images/production_grade_implementation_version_6/Step_functions/replay_failed_ingestion.png)
     - Add two policies to make it work the rest are auto-generated
@@ -6128,7 +6128,7 @@ dynamodb.put_item(
             ]
         }
         ```
-- Improved replay state function
+- Improved replay step function
     - ```json
         {
         "Comment": "Replay ETL from DLQ (Fixed - State Preservation + Safe Errors)",
@@ -7903,6 +7903,324 @@ The correct production approach is to separate schema evolution handling into ex
 - In order to run this lambda function using the test button make sure to remove the default key value pairs from the input in the lambda function as shown in this screenshot. 
 ![create_lambda_function_7](images/production_grade_implementation_version_7/LambdaFunction/create_lambda_function_7.png)
 
+### Setting up Step functions 
+- In this version I managed to reduce the number of step functions that is used to orchestrate AWS glue ETL pipeline. 
+- In version 6 there were two step functions but version 7 I have created only one step function and I managed to re-use the same step function for processing my DLQ event messages 
+- Step function in version 7 is called ```process_sonar_qube_step_function``` the code of which is shown as below :
+    - ```json
+      {
+        "Comment": "Glue ETL — semaphore acquired by Lambda before execution starts. No thundering herd possible.",
+        "StartAt": "ProcessFiles",
+        "States": {
+            "ProcessFiles": {
+            "Type": "Map",
+            "ItemsPath": "$.files",
+            "MaxConcurrency": 1,
+            "Iterator": {
+                "StartAt": "RunGlueJob",
+                "States": {
+                "RunGlueJob": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::glue:startJobRun.sync",
+                    "Parameters": {
+                    "JobName": "process_sonar_qube_logs_ETL",
+                    "Arguments": {
+                        "--source_bucket.$": "$.bucket",
+                        "--source_key.$": "$.key",
+                        "--SINK_BUCKET_NAME.$": "$.glue_args.--SINK_BUCKET_NAME",
+                        "--GLUE_CATALOG_DATABASE.$": "$.glue_args.--GLUE_CATALOG_DATABASE",
+                        "--GLUE_CATALOG_TABLE_NAME.$": "$.glue_args.--GLUE_CATALOG_TABLE_NAME",
+                        "--DYNAMO_DB_TABLE_NAME.$": "$.glue_args.--DYNAMO_DB_TABLE_NAME"
+                    }
+                    },
+                    "ResultPath": "$.glueResult",
+                    "Catch": [
+                    {
+                        "ErrorEquals": [
+                        "States.ALL"
+                        ],
+                        "ResultPath": "$.error",
+                        "Next": "ReleaseLockAfterFailure"
+                    }
+                    ],
+                    "Next": "ReleaseLockAfterSuccess"
+                },
+                "ReleaseLockAfterSuccess": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::dynamodb:updateItem",
+                    "Parameters": {
+                    "TableName.$": "$.glue_args.--DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME",
+                    "Key": {
+                        "semaphore_key": {
+                        "S": "GLUE_SEMAPHORE"
+                        }
+                    },
+                    "UpdateExpression": "SET current_count = current_count - :dec",
+                    "ConditionExpression": "current_count > :zero",
+                    "ExpressionAttributeValues": {
+                        ":dec": {
+                        "N": "1"
+                        },
+                        ":zero": {
+                        "N": "0"
+                        }
+                    }
+                    },
+                    "ResultPath": "$.releaseResult",
+                    "Catch": [
+                    {
+                        "ErrorEquals": [
+                        "DynamoDB.ConditionalCheckFailedException"
+                        ],
+                        "ResultPath": "$.releaseError",
+                        "Next": "UpdateSuccess"
+                    }
+                    ],
+                    "Next": "UpdateSuccess"
+                },
+                "ReleaseLockAfterFailure": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::dynamodb:updateItem",
+                    "Parameters": {
+                    "TableName.$": "$.glue_args.--DYNAMO_DB_CONCURRENCY_TRACKER_TABLE_NAME",
+                    "Key": {
+                        "semaphore_key": {
+                        "S": "GLUE_SEMAPHORE"
+                        }
+                    },
+                    "UpdateExpression": "SET current_count = current_count - :dec",
+                    "ConditionExpression": "current_count > :zero",
+                    "ExpressionAttributeValues": {
+                        ":dec": {
+                        "N": "1"
+                        },
+                        ":zero": {
+                        "N": "0"
+                        }
+                    }
+                    },
+                    "ResultPath": "$.releaseResult",
+                    "Catch": [
+                    {
+                        "ErrorEquals": [
+                        "DynamoDB.ConditionalCheckFailedException"
+                        ],
+                        "ResultPath": "$.releaseError",
+                        "Next": "UpdateFailure"
+                    }
+                    ],
+                    "Next": "UpdateFailure"
+                },
+                "UpdateSuccess": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::dynamodb:updateItem",
+                    "Parameters": {
+                    "TableName.$": "$.glue_args.--DYNAMO_DB_TABLE_NAME",
+                    "Key": {
+                        "file_key": {
+                        "S.$": "$.file_key"
+                        }
+                    },
+                    "UpdateExpression": "SET #s = :s, updated_at = :t",
+                    "ExpressionAttributeNames": {
+                        "#s": "status"
+                    },
+                    "ExpressionAttributeValues": {
+                        ":s": {
+                        "S": "SUCCESS"
+                        },
+                        ":t": {
+                        "S.$": "$$.State.EnteredTime"
+                        }
+                    }
+                    },
+                    "ResultPath": "$.updateSuccessResult",
+                    "End": true
+                },
+                "UpdateFailure": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::dynamodb:updateItem",
+                    "Parameters": {
+                    "TableName.$": "$.glue_args.--DYNAMO_DB_TABLE_NAME",
+                    "Key": {
+                        "file_key": {
+                        "S.$": "$.file_key"
+                        }
+                    },
+                    "UpdateExpression": "SET #s = :s, error_message = :e, updated_at = :t",
+                    "ExpressionAttributeNames": {
+                        "#s": "status"
+                    },
+                    "ExpressionAttributeValues": {
+                        ":s": {
+                        "S": "FAILED"
+                        },
+                        ":e": {
+                        "S.$": "States.JsonToString($)"
+                        },
+                        ":t": {
+                        "S.$": "$$.State.EnteredTime"
+                        }
+                    }
+                    },
+                    "ResultPath": "$.updateFailureResult",
+                    "Next": "SendToDLQ"
+                },
+                "SendToDLQ": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::sqs:sendMessage",
+                    "Parameters": {
+                    "QueueUrl": "https://sqs.ap-south-1.amazonaws.com/746244690650/DataProcessingDLQ.fifo",
+                    "MessageGroupId": "sonar-qube-dlq-group",
+                    "MessageBody.$": "States.JsonToString($)"
+                    },
+                    "ResultPath": "$.dlqResult",
+                    "End": true
+                }
+                }
+            },
+            "End": true
+            }
+        }
+        }
+      ```
+    - ![step_function_1](images/production_grade_implementation_version_7/step_function/step_function_1.png)
+- These are the configurations that I did when creating the step function 
+- ![step_function_2](images/production_grade_implementation_version_7/step_function/step_function_2.png)
+- ![step_function_3](images/production_grade_implementation_version_7/step_function/step_function_3.png)
+![step_function_4](images/production_grade_implementation_version_7/step_function/step_function_4.png)
+![step_function_5](images/production_grade_implementation_version_7/step_function/step_function_5.png)
+- IAM role attached to this step function is named ```StepFunctions-process_sonar_qube_step_function-role-luacf37bc ```
+    - Policies attached to this role is : 
+        - ```AllowServicesToWriteLogs``` : 
+            -   This policy allows step function to write logs in cloud watch
+            ```json
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": [
+                            "logs:CreateLogDelivery",
+                            "logs:GetLogDelivery",
+                            "logs:UpdateLogDelivery",
+                            "logs:DeleteLogDelivery",
+                            "logs:ListLogDeliveries",
+                            "logs:PutResourcePolicy",
+                            "logs:DescribeResourcePolicies",
+                            "logs:DescribeLogGroups"
+                        ],
+                        "Resource": "*"
+                    }
+                ]
+            }
+            ```
+        - ```DynamoDBTableContentScopedAccessPolicy-c033e285-d19d-4a39-907e-fd05b0dd99d1``` : 
+            - This policy allows step funtion to get and update items in ```sonar_qube_logs_processing_registery``` and ```glue_semaphore``` tables in dynamoDB
+            ```json
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "DynamoDBStepFunctionAccessPolicy",
+                        "Effect": "Allow",
+                        "Action": [
+                            "dynamodb:UpdateItem",
+                            "dynamodb:GetItem"
+                        ],
+                        "Resource": [
+                            "arn:aws:dynamodb:ap-south-1:746244690650:table/sonar_qube_logs_processing_registery",
+                            "arn:aws:dynamodb:ap-south-1:746244690650:table/glue_semaphore"
+                        ]
+                    }
+                ]
+            }
+            ```
+        - ```GlueJobRunManagementFullAccessPolicy-f580ad74-893a-47e2-96cb-ae620447b8e7``` : 
+            - This policy allows the step function to start , get and stop job runs in aws glue.
+            ```json
+            {
+                "Statement": [
+                    {
+                        "Action": [
+                            "glue:StartJobRun",
+                            "glue:GetJobRun",
+                            "glue:GetJobRuns",
+                            "glue:BatchStopJobRun"
+                        ],
+                        "Effect": "Allow",
+                        "Resource": [
+                            "*"
+                        ]
+                    }
+                ],
+                "Version": "2012-10-17"
+            }
+            ```
+        - ```SQSSendMessageScopedAccessPolicy-9ccb363f-5a86-4466-b4cc-ac822ec251cd``` : 
+            - This policy allows step function to send and save messages in ```DataProcessingDLQ.fifo``` and ```DataProcessingJobQueue.fifo``` sqs queue.
+            ```json
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": [
+                            "sqs:SendMessage"
+                        ],
+                        "Resource": [
+                            "arn:aws:sqs:ap-south-1:746244690650:DataProcessingJobQueue.fifo",
+                            "arn:aws:sqs:ap-south-1:746244690650:DataProcessingDLQ.fifo"
+                        ]
+                    }
+                ]
+            }
+            ```
+        - ```XRayAccessPolicy-66ef214f-f896-4d88-8a5a-9d460bf392ec``` : 
+            - This policy allows step function to use X-ray which is an aws service 
+            ```json
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": [
+                            "xray:PutTraceSegments",
+                            "xray:PutTelemetryRecords",
+                            "xray:GetSamplingRules",
+                            "xray:GetSamplingTargets"
+                        ],
+                        "Resource": [
+                            "*"
+                        ]
+                    }
+                ]
+            }
+            ```
+### Setting up AWS DynamoDB
+- In this implementation I have created two tables 
+    - ```glue_semaphore``` : 
+        - This table allows the other systems like lambda function and step functions to keep track of the number of concurrent AWS glue ETL job running and the number of concurrency set in AWS glue ETL configuration. 
+    - ```sonar_qube_logs_processing_registery``` : 
+        - This table allows the pipeline to keep track of the files that have : 
+            - Success : 
+                - The files that have successfully processed by AWS glue ETL job without any errors.
+            - Failed : 
+                - The files that have failed to be processed by AWS glue ETL job due to some errors.
+                - In this case the error_message column will contain a copy of the event message that is being saved in DLQ named ```DataProcessingDLQ.fifo```. This is done to backup the event messages in case someone accidently purged by someone.
+            - In_progress : 
+                - The files that are currently being processed by AWS glue ETL job
+#### sonar_qube_logs_processing_registery
+![dynamo_db_sonar_qube_logs_processing_registery](images/production_grade_implementation_version_7/dynamoDB/dynamo_db_sonar_qube_logs_processing_registery.png)
+- I am including this screen shot to give you an idea what are the columns that you will have to include in this table that makes sense.
+#### glue_semaphore
+![dynamo_db_glue_semaphore_1](images/production_grade_implementation_version_7/dynamoDB/dynamo_db_glue_semaphore_1.png)
+![dynamo_db_glue_semaphore_2](images/production_grade_implementation_version_7/dynamoDB/dynamo_db_glue_semaphore_2.png)
+- I am including this screen shot to give you an idea what are the columns that you will have to include in this table that makes sense.
+- One thing to note this table is not a multi-row table this is a single row table i.e in this table once a row is inserted only update operations will be performed in that row.
+
+### Setting up AWS glue ETL job
+- This is the core of my pipeline all the other aws services that I am using in my pipeline is just for this 
 
 
 

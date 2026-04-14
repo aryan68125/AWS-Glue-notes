@@ -9383,7 +9383,21 @@ These are the errors I faced when implementing version 7 of this pipeline
 | SQS messages silently rejected — none reaching Lambda | Content-Based Deduplication OFF on FIFO queue. EventBridge did not provide `MessageDeduplicationId`. | Enable Content-Based Deduplication on SQS FIFO queue. | Version 7 Infrastructure |
 | AccessDeniedException: glue:GetJob | Lambda IAM role missing `glue:GetJob` permission for `sync_glue_concurrency()`. | Attach IAM policy: Allow `glue:GetJob` on specific Glue job ARN. | Version 7 IAM |
 
-
+## Key Engineering Learnings when implementing version 7 ETL pipeline 
+1. Semaphore location is everything : 
+    - A semaphore inside a running execution can only protect that execution's own actions. It cannot stop other executions from starting. The lock must be acquired at the boundary where new work is created in Lambda, before ```start_execution()``` not inside the work itself.
+2. ResultPath is non-optional on every Task state
+    - Every Task state in Step Functions that does not need its result to replace the entire state must specify ResultPath. Omitting it defaults to ResultPath: '$' which silently overwrites all previous state. This is the #1 source of mysterious 'field not found' errors in Step Functions.
+3. DynamoDB conditional writes are not optional for distributed locks
+    - An unconditional increment is not a lock. A lock requires that the check and the write happen atomically in a single database operation. DynamoDB's ConditionExpression makes the increment conditional either it succeeds and the lock is acquired, or it throws and the loser knows it failed. Without this, any number of concurrent writers can pass a prior read-based check before any of them commits.
+4. SQS batchItemFailures requires explicit opt-in
+    - Returning ```{'batchItemFailures': [...]}``` from a Lambda function does nothing unless 'Report batch item failures' is enabled on the SQS event source mapping. Without the opt-in, SQS treats any HTTP 200 response as full batch success and deletes all messages.
+5. Jitter helps but cannot solve structural N > M competition
+    - Jitter randomises retry timing and reduces the probability of simultaneous lock contention. But it is probabilistic, not deterministic. Under sufficient load or at exact batch transition moments, multiple executions will still collide. The structural fix reducing N to match M is always more reliable than statistical desynchronisation.
+6. SQS visibility timeout must exceed Glue job duration
+    - If the visibility timeout is shorter than a Glue job, a message returned to SQS by ```batchItemFailures``` becomes visible for retry while the job is still running. The retry Lambda sees ```count = max```, fails ```acquire_glue_slot```, and the message goes back to the queue again burning through the retry budget. Set visibility ```timeout ≥ max``` expected Glue job duration.
+7. Step Function 'Succeeded' does not mean business success
+    - Step Functions 'Succeeded' means the execution reached a terminal End state without an unhandled exception. If every failure path routes to a ```Catch → UpdateFailure → SendToDLQ → End```, all executions show Succeeded. DynamoDB is the authoritative source of truth for whether each file was actually processed.
 
 
 

@@ -9294,18 +9294,94 @@ After the atomic AcquireLock fix, failures continued in stress tests. Analysis o
 | t = 10s, 20s ... 140s | All 8 wake simultaneously. See count = 2. All fail `CheckCapacity`. All sleep 10s again. Perfect lockstep. |
 | t = 150s             | Glue job 1 finishes. Count drops to 1. All 8 wake at the same moment, all read count = 1, all pass `CheckCapacity`, all hit `AcquireLock` simultaneously. 1 wins, 7 fail. Same wave repeats. |
 | t = 163s             | Glue job 2 finishes 13 seconds after job 1. Count briefly hits 0. Multiple executions see count = 0 or 1 before the new winner increments. More than 2 slip through → `ConcurrentRunsExceededException`. |
-
 - **Jitter Attempt 1** : Split on '0'
     - Added ```ComputeJitter``` state using ```States.MathAdd(10, States.ArrayLength(States.StringSplit($$.Execution.Name, '0')))``` to produce different wait times per execution based on the count of zeros in the execution UUID.
     - RESULT : Still failing. Analysis of actual execution UUIDs showed '0' appears 1–3 times in most UUIDs, producing wait times of only 12–14 seconds , 5 executions clustered at 12 seconds, creating the same synchronized wave at smaller scale.
+- **Jitter Attempt 2** : Split on 'e' + 'a' combined
+    - Improved formula : 
+        - ```States.MathAdd(States.MathAdd(10, States.ArrayLength(States.StringSplit($$.Execution.Name, 'e')))```, ```States.ArrayLength(States.StringSplit($$.Execution.Name, 'a')))```. This produced wait times of 12–18 seconds across actual execution UUIDs.
+    - RESULT : Reduced failures from 7 to 3. But 3 files still failed. The spread was better but still insufficient some executions still clustered at the same wait time and the fundamental issue (N independent state machines competing for M resources) was not addressable through randomisation alone. 
+    - This goes to show random numbers in computers are not actually random.
 
+#### Phase 3 : Architectural Insight: Move the Lock Upstream
+The fundamental diagnosis: jitter cannot solve the thundering herd because all retrying executions react to the same external event (a count decrement) at the same time, regardless of their individual wait timers. No randomisation of polling intervals prevents multiple executions from detecting the same state change simultaneously.
 
+**Solution** : move semaphore acquisition from inside a running execution to before the execution is created. An execution that has not started yet cannot create a race condition.
+```bash
+BROKEN FLOW:
+  SQS message → Lambda (returns immediately) → Step Function starts
+                                                └─ AcquireLock (N executions racing)
 
+FIXED FLOW:
+  SQS message → Lambda → acquire_glue_slot() atomically
+                          ├── slot acquired → Step Function starts (already holds slot)
+                          └── no slot → batchItemFailures → SQS keeps message → retries via visibility timeout
+```
+Lambda's ```acquire_glue_slot()``` is the identical atomic conditional DynamoDB write that was in ```AcquireLock``` but executed before any Step Function execution exists. SQS becomes the backpressure and retry mechanism. The Step Function only starts when a Glue slot is guaranteed. The semaphore loop (```GetSemaphore → CheckCapacity → AcquireLock → Wait → retry```) is removed from the Step Function entirely.
 
+Critical enabler: Report Batch Item Failures
+- BUG : After deploying the Lambda-level lock, only 2 of 10 files were processed. The other 8 disappeared permanently. Root cause: ```'Report batch item failures'``` was not enabled on the SQS trigger. Without this setting, SQS ignores the ```batchItemFailures``` return value and deletes ALL 10 messages on any HTTP 200 response including the 8 that Lambda explicitly flagged as unprocessed.
+- Solution : Enable 'Report batch item failures' on the Lambda SQS trigger in the console. Also set SQS visibility timeout to 300 seconds (5 minutes) longer than a Glue job so returned messages wait for a realistic slot availability before retrying.
 
+#### Phase 4 : Final Stable State
+After all fixes, the pipeline processed all 10 stress-test files without a single failure:
 
+| Time          | Event                         | Explanation |
+|---------------|------------------------------|-------------|
+| t = 0s        | Files 1–2 start Glue         | Lambda `acquire_glue_slot()` succeeds for 2 invocations. 8 `batchItemFailures` returned SQS retains those messages. |
+| t = 300s      | SQS retries messages 3–4     | Visibility timeout expires. Lambda invoked again. Glue slots still busy 2 more `batchItemFailures`. SQS retains 6 messages. |
+| t = 300–600s  | Glue job 1 finishes          | Step Function `ReleaseLockAfterSuccess` decrements count. Next SQS retry picks up 2 more messages, acquires slots, starts 2 more executions. |
+| t = 600–900s  | Files 5–6 process            | Pattern continues. No thundering herd only 2 Lambda invocations succeed `acquire_glue_slot()` per cycle, regardless of how many messages SQS delivers. |
+| t ≈ 1200s     | All 10 files SUCCESS         | 10/10 records in `sonar_qube_logs_processing_registery` show `status = SUCCESS`, `row_count = 100`. |
 
+## Explaination on how everything comes togeather in version 7 implementation 
+### The Semaphore: glue_semaphore DynamoDB Table
 
+| Attribute               | Type         | Purpose |
+|------------------------|--------------|---------|
+| semaphore_key          | String (PK)  | Always `GLUE_SEMAPHORE` singleton record |
+| current_count          | Number       | Active Glue jobs at this moment |
+| max_glue_concurrency   | Number       | Synced from Glue `ExecutionProperty.MaxConcurrentRuns` currently 2 |
+
+### Lambda: TriggerProcessSonarQubeLogStepFunction
+The Lambda function is the sole concurrency gate. Its execution sequence per SQS message:
+1. ```sync_glue_concurrency()``` : creates or updates the semaphore record to match the current Glue ```MaxConcurrentRuns``` value.
+2. Idempotency check : reads ```sonar_qube_logs_processing_registery``` -> skip if ```SUCCESS``` or ```IN_PROGRESS```
+3. ```acquire_glue_slot()``` : atomic conditional DynamoDB ```UpdateItem```: increment count only if ```count < max```. Returns True (slot acquired) or False (capacity full)
+4. If False : append to ```batchItemFailures``` → SQS returns this message after visibility timeout → Lambda never starts a Step Function
+5. If True : write ```IN_PROGRESS``` to registry → ```start_execution()``` → Lambda returns
+
+### Step Function: ```process_sonar_qube_step_function```
+The Step Function no longer contains any semaphore acquisition logic. It receives execution only when a slot is already held:
+```bash
+RunGlueJob (.sync — waits for completion)
+    ├── success → ReleaseLockAfterSuccess (count - 1, guarded count > 0)
+    │             → UpdateSuccess (status = SUCCESS, row_count written)
+    │             → End
+    └── failure → ReleaseLockAfterFailure (count - 1, guarded count > 0)
+                  → UpdateFailure (status = FAILED, error_message written)
+                  → SendToDLQ (MessageBody = States.JsonToString($))
+                  → End
+```
+NOTE : SendToDLQ now serialises the entire execution state ($) not just $.error. This is what makes the ```ProcessDLQMessagesOnDemandLamdbaFunction``` able to replay messages it can extract ```bucket```, ```key```, and ```file_key``` from the DLQ message body.
+
+### DLQ Replay: ProcessDLQMessagesOnDemandLamdbaFunction
+- A separate Lambda function invoked manually (or via EventBridge Scheduler) to drain the DLQ. It mirrors the main Lambda's logic exactly same idempotency check, same ```acquire_glue_slot()``` but reads from ```DataProcessingDLQ.fifo``` via ```sqs.receive_message()``` instead of ```event['Records']```. 
+- Messages are deleted from the DLQ only after Step Function starts successfully. If Glue is at capacity, the message is left in DLQ for the next scheduler invocation.
+
+## Complete Error Catalogue 
+These are the errors I faced when implementing version 7 of this pipeline 
+
+| Error | Root Cause | Fix Applied | Phase |
+|------|------------|------------|-------|
+| Glue.ConcurrentRunsExceededException | Multiple Step Function executions passed `CheckCapacity` before committing semaphore increment. `AcquireLock` had no `ConditionExpression`. | Add `ConditionExpression: 'current_count < max_glue_concurrency'` to `AcquireLock`. Add Catch on `DynamoDB.ConditionalCheckFailedException`. | Version 7 Phase 1 |
+| $.error could not be found in SendToDLQ input | `UpdateFailure` missing `ResultPath`. DynamoDB response replaced entire state, erasing `$.error`. | Add `"ResultPath": "$.updateFailureResult"` so response is merged instead of replacing state. | Version 7 Phase 1 |
+| current_count could go negative | `ReleaseLock` ran twice (retry), decrementing count below 0. | Add `ConditionExpression: 'current_count > :zero'` to both ReleaseLock states with Catch on ConditionalCheckFailedException. | Version 7 Phase 1 |
+| Lockstep wave jitter formula too narrow | Split-on `'0'` produced similar wait times (12–14s), causing synchronized retries. | Change jitter formula to split on `'e' + 'a'`: `10 + count_e + count_a` → better spread (12–18s). | Version 7 Phase 2 |
+| 3 files still failing after improved jitter | Jitter cannot fully eliminate thundering herd independent executions still collide. | Move lock acquisition to Lambda. Only start execution when slot confirmed. Use SQS for retry. | Version 7 Phase 3 |
+| Only 2 of 10 files processed after Lambda-level lock | `Report batch item failures` not enabled. SQS deleted all messages on HTTP 200. | Enable `Report batch item failures`. Set SQS visibility timeout to 300s. | Version 7 Phase 3 |
+| SQS messages silently rejected — none reaching Lambda | Content-Based Deduplication OFF on FIFO queue. EventBridge did not provide `MessageDeduplicationId`. | Enable Content-Based Deduplication on SQS FIFO queue. | Version 7 Infrastructure |
+| AccessDeniedException: glue:GetJob | Lambda IAM role missing `glue:GetJob` permission for `sync_glue_concurrency()`. | Attach IAM policy: Allow `glue:GetJob` on specific Glue job ARN. | Version 7 IAM |
 
 
 

@@ -9369,7 +9369,7 @@ NOTE : SendToDLQ now serialises the entire execution state ($) not just $.error.
 - A separate Lambda function invoked manually (or via EventBridge Scheduler) to drain the DLQ. It mirrors the main Lambda's logic exactly same idempotency check, same ```acquire_glue_slot()``` but reads from ```DataProcessingDLQ.fifo``` via ```sqs.receive_message()``` instead of ```event['Records']```. 
 - Messages are deleted from the DLQ only after Step Function starts successfully. If Glue is at capacity, the message is left in DLQ for the next scheduler invocation.
 
-## Complete Error Catalogue 
+## Complete Error Catalogue in version 7 implementation
 These are the errors I faced when implementing version 7 of this pipeline 
 
 | Error | Root Cause | Fix Applied | Phase |
@@ -9382,6 +9382,18 @@ These are the errors I faced when implementing version 7 of this pipeline
 | Only 2 of 10 files processed after Lambda-level lock | `Report batch item failures` not enabled. SQS deleted all messages on HTTP 200. | Enable `Report batch item failures`. Set SQS visibility timeout to 300s. | Version 7 Phase 3 |
 | SQS messages silently rejected — none reaching Lambda | Content-Based Deduplication OFF on FIFO queue. EventBridge did not provide `MessageDeduplicationId`. | Enable Content-Based Deduplication on SQS FIFO queue. | Version 7 Infrastructure |
 | AccessDeniedException: glue:GetJob | Lambda IAM role missing `glue:GetJob` permission for `sync_glue_concurrency()`. | Attach IAM policy: Allow `glue:GetJob` on specific Glue job ARN. | Version 7 IAM |
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

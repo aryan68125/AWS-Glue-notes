@@ -9323,7 +9323,7 @@ Critical enabler: Report Batch Item Failures
 - BUG : After deploying the Lambda-level lock, only 2 of 10 files were processed. The other 8 disappeared permanently. Root cause: ```'Report batch item failures'``` was not enabled on the SQS trigger. Without this setting, SQS ignores the ```batchItemFailures``` return value and deletes ALL 10 messages on any HTTP 200 response including the 8 that Lambda explicitly flagged as unprocessed.
 - Solution : Enable 'Report batch item failures' on the Lambda SQS trigger in the console. Also set SQS visibility timeout to 300 seconds (5 minutes) longer than a Glue job so returned messages wait for a realistic slot availability before retrying.
 
-#### Phase 4 : Final Stable State
+#### Phase 4 : Final Stable State 
 After all fixes, the pipeline processed all 10 stress-test files without a single failure:
 
 | Time          | Event                         | Explanation |
